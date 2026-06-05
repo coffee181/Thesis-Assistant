@@ -186,9 +186,9 @@ describe("App", () => {
 
     render(<App />);
 
-    expect(await screen.findByText("Backend: ok")).toBeInTheDocument();
+    expect(await screen.findByText("Backend ok")).toBeInTheDocument();
     expect(await screen.findByText("Paper A")).toBeInTheDocument();
-    expect(await screen.findByText("Provider: none")).toBeInTheDocument();
+    expect(screen.queryByText("Provider: none")).not.toBeInTheDocument();
   });
 
   it("shows a reader-centered shell and hides low-frequency controls by default", async () => {
@@ -253,7 +253,7 @@ describe("App", () => {
 
     render(<App />);
 
-    expect(await screen.findByText("Backend: ok")).toBeInTheDocument();
+    expect(await screen.findByText("Backend ok")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledTimes(6);
   });
 
@@ -279,7 +279,9 @@ describe("App", () => {
 
     render(<App />);
 
-    expect(await screen.findByText("Library: F:\\KnowledgeAgentLibrary")).toBeInTheDocument();
+    await userEvent.click(await screen.findByRole("button", { name: "Settings" }));
+    const dialog = screen.getByRole("dialog", { name: "Settings" });
+    expect(within(dialog).getByLabelText("Library location")).toHaveValue("F:\\KnowledgeAgentLibrary");
     const urls = fetchMock.mock.calls.map(([url]) => String(url));
     expect(urls.indexOf("http://127.0.0.1:8765/api/library")).toBeLessThan(
       urls.indexOf("http://127.0.0.1:8765/api/papers"),
@@ -319,9 +321,11 @@ describe("App", () => {
     });
 
     render(<App />);
-    await userEvent.clear(await screen.findByLabelText("Library location"));
-    await userEvent.type(screen.getByLabelText("Library location"), "D:\\ResearchLibrary");
-    await userEvent.click(screen.getByRole("button", { name: "Select library" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Settings" }));
+    const dialog = screen.getByRole("dialog", { name: "Settings" });
+    await userEvent.clear(within(dialog).getByLabelText("Library location"));
+    await userEvent.type(within(dialog).getByLabelText("Library location"), "D:\\ResearchLibrary");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Select library" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -336,7 +340,7 @@ describe("App", () => {
       library_dir: "D:\\ResearchLibrary",
     });
     expect(await screen.findByText("Library selected")).toBeInTheDocument();
-    expect(await screen.findByText("Library: D:\\ResearchLibrary")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Settings" })).not.toBeInTheDocument();
     expect(await screen.findByText("Switched Paper")).toBeInTheDocument();
   });
 
@@ -430,19 +434,20 @@ describe("App", () => {
     expect(await screen.findByText("Old library note")).toBeInTheDocument();
     expect(await screen.findByText("Old highlight text")).toBeInTheDocument();
     selectReaderText("retrieval augmented generation");
-    await userEvent.click(await screen.findByRole("button", { name: "Translate selection" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Translate" }));
     expect(await screen.findByText("Old selected answer")).toBeInTheDocument();
 
-    await userEvent.clear(screen.getByLabelText("Library location"));
-    await userEvent.type(screen.getByLabelText("Library location"), "D:\\ResearchLibrary");
-    await userEvent.click(screen.getByRole("button", { name: "Select library" }));
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    const dialog = screen.getByRole("dialog", { name: "Settings" });
+    await userEvent.clear(within(dialog).getByLabelText("Library location"));
+    await userEvent.type(within(dialog).getByLabelText("Library location"), "D:\\ResearchLibrary");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Select library" }));
 
     expect(await screen.findByText("Library selected")).toBeInTheDocument();
-    expect(screen.queryByText("Selected text")).not.toBeInTheDocument();
     expect(screen.queryByText("Old selected answer")).not.toBeInTheDocument();
     expect(screen.queryByText("Old library note")).not.toBeInTheDocument();
     expect(screen.queryByText("Old highlight text")).not.toBeInTheDocument();
-    expect(screen.getByText("Context: none")).toBeInTheDocument();
+    expect(screen.getByText("Context: no paper open")).toBeInTheDocument();
   });
 
   it("job panel queues a PDF folder import and refreshes job progress", async () => {
@@ -1672,12 +1677,14 @@ describe("App", () => {
       });
 
     render(<App />);
-    await userEvent.selectOptions(await screen.findByLabelText("Provider"), "openai_compatible");
-    await userEvent.type(screen.getByLabelText("Base URL"), "https://api.example.test/v1");
-    await userEvent.type(screen.getByLabelText("Proxy URL"), "http://127.0.0.1:7897");
-    await userEvent.type(screen.getByLabelText("Model"), "research-model");
-    await userEvent.type(screen.getByLabelText("API key"), "secret-key");
-    await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Settings" }));
+    const dialog = screen.getByRole("dialog", { name: "Settings" });
+    await userEvent.selectOptions(within(dialog).getByLabelText("Provider"), "openai_compatible");
+    await userEvent.type(within(dialog).getByLabelText("Base URL"), "https://api.example.test/v1");
+    await userEvent.type(within(dialog).getByLabelText("Proxy URL"), "http://127.0.0.1:7897");
+    await userEvent.type(within(dialog).getByLabelText("Model"), "research-model");
+    await userEvent.type(within(dialog).getByLabelText("API key"), "secret-key");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Save settings" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -1696,9 +1703,13 @@ describe("App", () => {
       outbound_context_policy: "snippets_only",
       proxy_url: "http://127.0.0.1:7897",
     });
-    expect(await screen.findByText("Provider: openai_compatible")).toBeInTheDocument();
-    expect(await screen.findByText("API key configured")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Settings" })).not.toBeInTheDocument();
     expect(screen.queryByText("secret-key")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    const savedDialog = screen.getByRole("dialog", { name: "Settings" });
+    expect(within(savedDialog).getByLabelText("Provider")).toHaveValue("openai_compatible");
+    expect(within(savedDialog).getByText("API key configured")).toBeInTheDocument();
+    expect(within(savedDialog).queryByText("secret-key")).not.toBeInTheDocument();
   });
 
   it("opens a cited page from an assistant citation", async () => {

@@ -46,6 +46,7 @@ import { AssistantRail } from "./components/AssistantRail";
 import { ImportDialog, ImportMode } from "./components/ImportDialog";
 import { LibraryRail } from "./components/LibraryRail";
 import { ReaderWorkspace } from "./components/ReaderWorkspace";
+import { SettingsDialog } from "./components/SettingsDialog";
 import { TopBar } from "./components/TopBar";
 import "./styles.css";
 
@@ -168,6 +169,7 @@ export default function App() {
       setExternalResults([]);
       setJobs([]);
       setMessage("Library selected");
+      setOpenSurface(null);
       await refreshPapers();
       try {
         await refreshJobs();
@@ -415,6 +417,7 @@ export default function App() {
       setApiKey("");
       applyProviderSettings(saved);
       setMessage("Provider settings saved");
+      setOpenSurface(null);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not save provider settings");
     }
@@ -665,6 +668,29 @@ export default function App() {
           onImportPdf={handleImport}
           onModeChange={setImportMode}
           onSourcePathChange={setSourcePath}
+        />
+      ) : null}
+
+      {openSurface === "settings" ? (
+        <SettingsDialog
+          apiKey={apiKey}
+          apiKeyConfigured={providerSettings?.api_key_configured ?? false}
+          baseUrl={baseUrl}
+          libraryPath={libraryPath}
+          model={model}
+          outboundContextPolicy={outboundContextPolicy}
+          provider={provider}
+          proxyUrl={proxyUrl}
+          onApiKeyChange={setApiKey}
+          onBaseUrlChange={setBaseUrl}
+          onClose={() => setOpenSurface(null)}
+          onLibraryPathChange={setLibraryPath}
+          onModelChange={setModel}
+          onOutboundContextPolicyChange={setOutboundContextPolicy}
+          onProviderChange={setProvider}
+          onProxyUrlChange={setProxyUrl}
+          onSaveSettings={handleSaveSettings}
+          onSelectLibrary={handleSelectLibrary}
         />
       ) : null}
     </main>
