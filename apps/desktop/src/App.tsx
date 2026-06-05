@@ -3,15 +3,22 @@ import { FormEvent, useEffect, useState } from "react";
 import {
   AskPaperQuestionResponse,
   askPaperQuestion,
+  askSelectedText,
+  createHighlight,
+  createNote,
   downloadOpenPdf,
   exportBibliography,
   getHealth,
   getProviderSettings,
   getReaderContext,
+  Highlight,
   importBibliography,
   importPendingDownload,
   importPdf,
+  listHighlights,
+  listNotes,
   listPapers,
+  Note,
   Paper,
   ProviderSettings,
   ReaderContext,
@@ -20,6 +27,7 @@ import {
   SearchHit,
   searchExternal,
   searchLocal,
+  SelectedTextAction,
 } from "./api";
 import "./styles.css";
 
@@ -44,6 +52,12 @@ export default function App() {
   const [outboundContextPolicy, setOutboundContextPolicy] = useState("snippets_only");
   const [question, setQuestion] = useState("");
   const [assistantAnswer, setAssistantAnswer] = useState<AskPaperQuestionResponse | null>(null);
+  const [selectedText, setSelectedText] = useState("");
+  const [selectedPageNumber, setSelectedPageNumber] = useState<number | null>(null);
+  const [selectedSourceSpan, setSelectedSourceSpan] = useState("");
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [highlights, setHighlights] = useState<Highlight[]>([]);
+  const [selectionBusy, setSelectionBusy] = useState(false);
   const [message, setMessage] = useState("");
 
   async function refreshPapers() {
@@ -190,12 +204,27 @@ export default function App() {
     }
   }
 
+  function clearSelection() {
+    setSelectedText("");
+    setSelectedPageNumber(null);
+    setSelectedSourceSpan("");
+  }
+
   async function openPaper(paper: Paper) {
     setMessage("");
+    clearSelection();
+    setNotes([]);
+    setHighlights([]);
+    setAssistantAnswer(null);
     try {
-      const context = await getReaderContext(paper.id);
+      const [context, notesResponse, highlightsResponse] = await Promise.all([
+        getReaderContext(paper.id),
+        listNotes(paper.id),
+        listHighlights(paper.id),
+      ]);
       setReaderContext(context);
-      setAssistantAnswer(null);
+      setNotes(notesResponse.notes);
+      setHighlights(highlightsResponse.highlights);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not open paper");
     }
@@ -231,6 +260,79 @@ export default function App() {
       setMessage(error instanceof Error ? error.message : "Ask failed");
     }
   }
+
+  function handleReaderPageMouseUp(pageNumber: number) {
+    const selection = (window.getSelection?.()?.toString() ?? "").trim();
+    if (!selection) return;
+    setSelectedText(selection);
+    setSelectedPageNumber(pageNumber);
+    setSelectedSourceSpan(`page:${pageNumber}:selection`);
+  }
+
+  async function handleSelectionAction(action: SelectedTextAction) {
+    if (!readerContext || !selectedText.trim() || selectedPageNumber === null) return;
+    setMessage("");
+    setSelectionBusy(true);
+    try {
+      const response = await askSelectedText(readerContext.paper.id, {
+        selected_text: selectedText,
+        page_number: selectedPageNumber,
+        source_span: selectedSourceSpan,
+        action,
+      });
+      setAssistantAnswer(response);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Selection ask failed");
+    } finally {
+      setSelectionBusy(false);
+    }
+  }
+
+  async function handleHighlightSelection() {
+    if (!readerContext || !selectedText.trim() || selectedPageNumber === null) return;
+    setMessage("");
+    setSelectionBusy(true);
+    try {
+      const highlight = await createHighlight({
+        paper_id: readerContext.paper.id,
+        page_number: selectedPageNumber,
+        source_span: selectedSourceSpan,
+        selected_text: selectedText,
+        color: "yellow",
+        note_id: null,
+      });
+      setHighlights((current) => [...current, highlight]);
+      setMessage("Highlight saved");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Highlight save failed");
+    } finally {
+      setSelectionBusy(false);
+    }
+  }
+
+  async function handleSaveAnswerAsNote() {
+    if (!readerContext || !assistantAnswer) return;
+    const citation = assistantAnswer.citations[0];
+    setMessage("");
+    try {
+      const note = await createNote({
+        paper_id: readerContext.paper.id,
+        body: assistantAnswer.answer,
+        page_number: citation?.page_number ?? selectedPageNumber,
+        source_span: citation?.source_span ?? (selectedSourceSpan || null),
+        selected_text: citation?.snippet ?? (selectedText || null),
+        note_type: "assistant_answer",
+        qna_id: assistantAnswer.qna_id,
+      });
+      setNotes((current) => [note, ...current]);
+      setMessage("Note saved");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Note save failed");
+    }
+  }
+
+  const selectionReady =
+    readerContext !== null && selectedText.trim().length > 0 && selectedPageNumber !== null;
 
   return (
     <main className="app-shell">
@@ -419,7 +521,11 @@ export default function App() {
             <p className="empty">No extracted text available.</p>
           ) : (
             readerContext.pages.map((page) => (
-              <article className="reader-page" key={page.page_number}>
+              <article
+                className="reader-page"
+                key={page.page_number}
+                onMouseUp={() => handleReaderPageMouseUp(page.page_number)}
+              >
                 <h3>Page {page.page_number}</h3>
                 <p>{page.text}</p>
               </article>
@@ -435,6 +541,42 @@ export default function App() {
             ? `Context: ${readerContext.paper.title} - ${readerContext.document.parse_status}`
             : "Context: none"}
         </p>
+
+        <section className="assistant-section" aria-labelledby="selection-heading">
+          <h3 id="selection-heading">Selection</h3>
+          {selectedText ? (
+            <div className="selection-block">
+              <strong>Selected text</strong>
+              <p>{selectedText}</p>
+              <span>Page {selectedPageNumber}</span>
+            </div>
+          ) : (
+            <p className="empty">No selection.</p>
+          )}
+          <div className="selection-actions">
+            <button
+              type="button"
+              disabled={!selectionReady || selectionBusy}
+              onClick={() => handleSelectionAction("translate")}
+            >
+              Translate selection
+            </button>
+            <button
+              type="button"
+              disabled={!selectionReady || selectionBusy}
+              onClick={() => handleSelectionAction("explain")}
+            >
+              Explain selection
+            </button>
+            <button
+              type="button"
+              disabled={!selectionReady || selectionBusy}
+              onClick={handleHighlightSelection}
+            >
+              Highlight selection
+            </button>
+          </div>
+        </section>
 
         <section className="assistant-section" aria-labelledby="provider-heading">
           <h3 id="provider-heading">Model settings</h3>
@@ -511,9 +653,17 @@ export default function App() {
           {assistantAnswer ? (
             <article className="answer-block">
               <p>{assistantAnswer.answer}</p>
+              <div className="answer-actions">
+                <button type="button" onClick={handleSaveAnswerAsNote}>
+                  Save answer as note
+                </button>
+              </div>
               <div className="citation-list">
                 {assistantAnswer.citations.map((citation) => (
-                  <div className="citation" key={citation.chunk_id}>
+                  <div
+                    className="citation"
+                    key={`${citation.chunk_id ?? "selection"}-${citation.page_number}-${citation.source_span}`}
+                  >
                     <strong>Citation Page {citation.page_number}</strong>
                     <p>{citation.snippet}</p>
                   </div>
@@ -521,6 +671,37 @@ export default function App() {
               </div>
             </article>
           ) : null}
+        </section>
+
+        <section className="assistant-section" aria-labelledby="paper-notes-heading">
+          <h3 id="paper-notes-heading">Paper notes</h3>
+          <div className="note-list">
+            {notes.length === 0 ? (
+              <p className="empty">No notes.</p>
+            ) : (
+              notes.map((note) => (
+                <article className="note-item" key={note.id}>
+                  <strong>
+                    Note{note.page_number === null ? "" : ` Page ${note.page_number}`}
+                  </strong>
+                  <p>{note.body}</p>
+                  {note.selected_text ? <span>{note.selected_text}</span> : null}
+                </article>
+              ))
+            )}
+          </div>
+          <div className="note-list">
+            {highlights.length === 0 ? (
+              <p className="empty">No highlights.</p>
+            ) : (
+              highlights.map((highlight) => (
+                <article className="note-item highlight-item" key={highlight.id}>
+                  <strong>Highlight Page {highlight.page_number}</strong>
+                  <p>{highlight.selected_text}</p>
+                </article>
+              ))
+            )}
+          </div>
         </section>
       </aside>
     </main>

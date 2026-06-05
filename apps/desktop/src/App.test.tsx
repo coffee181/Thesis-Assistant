@@ -1,13 +1,14 @@
 import "@testing-library/jest-dom/vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "./App";
+import type { ProviderSettings } from "./api";
 
 const fetchMock = vi.fn();
 
-const defaultProviderSettings = {
+const defaultProviderSettings: ProviderSettings = {
   provider: "none",
   base_url: null,
   model: null,
@@ -15,14 +16,106 @@ const defaultProviderSettings = {
   api_key_configured: false,
 };
 
+const configuredProviderSettings: ProviderSettings = {
+  provider: "openai_compatible",
+  base_url: "https://api.example.test/v1",
+  model: "research-model",
+  outbound_context_policy: "snippets_only",
+  api_key_configured: true,
+};
+
+const readerPaper = {
+  id: 1,
+  title: "Reader Paper",
+  authors: null,
+  year: null,
+  doi: null,
+  venue: null,
+  abstract: null,
+  citation_key: null,
+  arxiv_id: null,
+  entry_type: null,
+  created_at: "now",
+};
+
+const readerContextPayload = {
+  paper: readerPaper,
+  document: {
+    id: 4,
+    paper_id: 1,
+    library_path: "papers/reader/paper.pdf",
+    file_hash: "hash",
+    page_count: 2,
+    parse_status: "parsed",
+    parse_error: null,
+    created_at: "now",
+  },
+  pages: [
+    { page_number: 1, text: "Page one explains the research question." },
+    { page_number: 2, text: "The method uses retrieval augmented generation." },
+  ],
+};
+
 beforeEach(() => {
   vi.stubGlobal("fetch", fetchMock);
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   fetchMock.mockReset();
 });
+
+function queueInitialReaderLoad(settings: ProviderSettings = defaultProviderSettings) {
+  fetchMock
+    .mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ status: "ok", service: "knowledge-agent-backend" }),
+    })
+    .mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ papers: [readerPaper] }),
+    })
+    .mockResolvedValueOnce({
+      ok: true,
+      json: async () => settings,
+    });
+}
+
+function queueOpenReaderContext() {
+  fetchMock
+    .mockResolvedValueOnce({
+      ok: true,
+      json: async () => readerContextPayload,
+    })
+    .mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ notes: [] }),
+    })
+    .mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ highlights: [] }),
+    });
+}
+
+async function openReaderPaper() {
+  render(<App />);
+  await userEvent.click(await screen.findByRole("button", { name: "Open Reader Paper" }));
+  await screen.findByText("The method uses retrieval augmented generation.");
+}
+
+function selectReaderText(text: string) {
+  vi.spyOn(window, "getSelection").mockReturnValue({
+    toString: () => text,
+  } as Selection);
+  fireEvent.mouseUp(screen.getByText("The method uses retrieval augmented generation."));
+}
+
+function fetchCallBody(path: string) {
+  const call = fetchMock.mock.calls.find(([url]) => String(url).includes(path));
+  if (!call) throw new Error(`No fetch call matched ${path}`);
+  return JSON.parse(String(call[1]?.body ?? "{}"));
+}
 
 describe("App", () => {
   it("loads backend status and papers", async () => {
@@ -517,6 +610,14 @@ describe("App", () => {
             { page_number: 2, text: "Page two describes the experimental setup." },
           ],
         }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ notes: [] }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ highlights: [] }),
       });
 
     render(<App />);
@@ -528,6 +629,199 @@ describe("App", () => {
     expect(await screen.findByText("Page 1")).toBeInTheDocument();
     expect(await screen.findByText("Page one explains the research question.")).toBeInTheDocument();
     expect(await screen.findByText("Context: Reader Paper - parsed")).toBeInTheDocument();
+  });
+
+  it("shows selected reader text in the assistant panel", async () => {
+    queueInitialReaderLoad();
+    queueOpenReaderContext();
+
+    await openReaderPaper();
+    selectReaderText("retrieval augmented generation");
+
+    expect(await screen.findByText("Selected text")).toBeInTheDocument();
+    expect(screen.getByText("retrieval augmented generation")).toBeInTheDocument();
+  });
+
+  it("translates selected text through the selected assistant endpoint", async () => {
+    queueInitialReaderLoad(configuredProviderSettings);
+    queueOpenReaderContext();
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        answer: "Selected translation",
+        mode: "selection",
+        provider: "openai_compatible",
+        qna_id: 13,
+        citations: [
+          {
+            chunk_id: null,
+            paper_id: 1,
+            title: "Reader Paper",
+            page_number: 2,
+            snippet: "retrieval augmented generation",
+            source_span: "page:2:selection",
+          },
+        ],
+      }),
+    });
+
+    await openReaderPaper();
+    selectReaderText("retrieval augmented generation");
+    await userEvent.click(await screen.findByRole("button", { name: "Translate selection" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://127.0.0.1:8765/api/papers/1/assistant/selection",
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
+    expect(fetchCallBody("/assistant/selection")).toMatchObject({
+      selected_text: "retrieval augmented generation",
+      page_number: 2,
+      source_span: "page:2:selection",
+      action: "translate",
+    });
+    expect(await screen.findByText("Selected translation")).toBeInTheDocument();
+    expect(await screen.findByText("Citation Page 2")).toBeInTheDocument();
+  });
+
+  it("explains selected text with the explain action", async () => {
+    queueInitialReaderLoad(configuredProviderSettings);
+    queueOpenReaderContext();
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        answer: "Selected explanation",
+        mode: "selection",
+        provider: "openai_compatible",
+        qna_id: 14,
+        citations: [
+          {
+            chunk_id: null,
+            paper_id: 1,
+            title: "Reader Paper",
+            page_number: 2,
+            snippet: "retrieval augmented generation",
+            source_span: "page:2:selection",
+          },
+        ],
+      }),
+    });
+
+    await openReaderPaper();
+    selectReaderText("retrieval augmented generation");
+    await userEvent.click(await screen.findByRole("button", { name: "Explain selection" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://127.0.0.1:8765/api/papers/1/assistant/selection",
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
+    expect(fetchCallBody("/assistant/selection")).toMatchObject({
+      action: "explain",
+    });
+    expect(await screen.findByText("Selected explanation")).toBeInTheDocument();
+  });
+
+  it("highlights selected text and displays it in the paper notes area", async () => {
+    queueInitialReaderLoad();
+    queueOpenReaderContext();
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        id: 21,
+        paper_id: 1,
+        page_number: 2,
+        source_span: "page:2:selection",
+        selected_text: "retrieval augmented generation",
+        color: "yellow",
+        note_id: null,
+        created_at: "now",
+      }),
+    });
+
+    await openReaderPaper();
+    selectReaderText("retrieval augmented generation");
+    await userEvent.click(await screen.findByRole("button", { name: "Highlight selection" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://127.0.0.1:8765/api/highlights",
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
+    expect(fetchCallBody("/api/highlights")).toMatchObject({
+      paper_id: 1,
+      page_number: 2,
+      source_span: "page:2:selection",
+      selected_text: "retrieval augmented generation",
+      color: "yellow",
+    });
+    expect(await screen.findByText("Highlight Page 2")).toBeInTheDocument();
+  });
+
+  it("saves a selected assistant answer as a note", async () => {
+    queueInitialReaderLoad(configuredProviderSettings);
+    queueOpenReaderContext();
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          answer: "Selected translation",
+          mode: "selection",
+          provider: "openai_compatible",
+          qna_id: 13,
+          citations: [
+            {
+              chunk_id: null,
+              paper_id: 1,
+              title: "Reader Paper",
+              page_number: 2,
+              snippet: "retrieval augmented generation",
+              source_span: "page:2:selection",
+            },
+          ],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          id: 31,
+          paper_id: 1,
+          body: "Selected translation",
+          page_number: 2,
+          source_span: "page:2:selection",
+          selected_text: "retrieval augmented generation",
+          note_type: "assistant_answer",
+          qna_id: 13,
+          created_at: "now",
+          updated_at: "now",
+        }),
+      });
+
+    await openReaderPaper();
+    selectReaderText("retrieval augmented generation");
+    await userEvent.click(await screen.findByRole("button", { name: "Translate selection" }));
+    await screen.findByText("Selected translation");
+    await userEvent.click(screen.getByRole("button", { name: "Save answer as note" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://127.0.0.1:8765/api/notes",
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
+    expect(fetchCallBody("/api/notes")).toMatchObject({
+      paper_id: 1,
+      body: "Selected translation",
+      page_number: 2,
+      source_span: "page:2:selection",
+      selected_text: "retrieval augmented generation",
+      note_type: "assistant_answer",
+      qna_id: 13,
+    });
+    expect(await screen.findByText("Note Page 2")).toBeInTheDocument();
   });
 
   it("saves provider settings without displaying the raw API key", async () => {
@@ -586,11 +880,7 @@ describe("App", () => {
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({
-          provider: "openai_compatible",
-          base_url: "https://api.example.test/v1",
-          model: "research-model",
-          outbound_context_policy: "snippets_only",
-          api_key_configured: true,
+          ...configuredProviderSettings,
         }),
       })
       .mockResolvedValueOnce({
@@ -612,6 +902,14 @@ describe("App", () => {
             { page_number: 2, text: "The method uses retrieval augmented generation." },
           ],
         }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ notes: [] }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ highlights: [] }),
       })
       .mockResolvedValueOnce({
         ok: true,

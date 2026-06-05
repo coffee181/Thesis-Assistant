@@ -117,7 +117,7 @@ export type SaveProviderSettingsRequest = {
 };
 
 export type Citation = {
-  chunk_id: number;
+  chunk_id: number | null;
   paper_id: number;
   title: string;
   page_number: number;
@@ -131,6 +131,67 @@ export type AskPaperQuestionResponse = {
   mode: string;
   provider: string;
   qna_id: number | null;
+};
+
+export type Note = {
+  id: number;
+  paper_id: number;
+  body: string;
+  page_number: number | null;
+  source_span: string | null;
+  selected_text: string | null;
+  note_type: string;
+  qna_id: number | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type NotesResponse = {
+  notes: Note[];
+};
+
+export type Highlight = {
+  id: number;
+  paper_id: number;
+  page_number: number;
+  source_span: string;
+  selected_text: string;
+  color: string;
+  note_id: number | null;
+  created_at: string;
+};
+
+export type HighlightsResponse = {
+  highlights: Highlight[];
+};
+
+export type SelectedTextAction = "translate" | "explain" | "summarize";
+
+export type AskSelectedTextRequest = {
+  selected_text: string;
+  page_number: number;
+  source_span: string;
+  action: SelectedTextAction;
+  instruction?: string | null;
+};
+
+export type CreateNoteRequest = {
+  paper_id: number;
+  body: string;
+  page_number: number | null;
+  source_span: string | null;
+  selected_text: string | null;
+  note_type: "manual" | "assistant_answer" | "selection";
+  qna_id: number | null;
+};
+
+export type CreateHighlightRequest = {
+  paper_id: number;
+  page_number: number;
+  source_span: string;
+  selected_text: string;
+  color: string;
+  note_id: number | null;
 };
 
 export async function getHealth(): Promise<HealthResponse> {
@@ -256,5 +317,59 @@ export async function askPaperQuestion(
     const payload = await response.json().catch(() => ({ detail: "Ask failed" }));
     throw new Error(payload.detail ?? "Ask failed");
   }
+  return response.json();
+}
+
+export async function askSelectedText(
+  paperId: number,
+  request: AskSelectedTextRequest,
+): Promise<AskPaperQuestionResponse> {
+  const response = await fetch(`${API_BASE}/api/papers/${paperId}/assistant/selection`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({ detail: "Selection ask failed" }));
+    throw new Error(payload.detail ?? "Selection ask failed");
+  }
+  return response.json();
+}
+
+export async function createNote(request: CreateNoteRequest): Promise<Note> {
+  const response = await fetch(`${API_BASE}/api/notes`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({ detail: "Note save failed" }));
+    throw new Error(payload.detail ?? "Note save failed");
+  }
+  return response.json();
+}
+
+export async function listNotes(paperId: number): Promise<NotesResponse> {
+  const response = await fetch(`${API_BASE}/api/papers/${paperId}/notes`);
+  if (!response.ok) throw new Error("Could not load notes");
+  return response.json();
+}
+
+export async function createHighlight(request: CreateHighlightRequest): Promise<Highlight> {
+  const response = await fetch(`${API_BASE}/api/highlights`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({ detail: "Highlight save failed" }));
+    throw new Error(payload.detail ?? "Highlight save failed");
+  }
+  return response.json();
+}
+
+export async function listHighlights(paperId: number): Promise<HighlightsResponse> {
+  const response = await fetch(`${API_BASE}/api/papers/${paperId}/highlights`);
+  if (!response.ok) throw new Error("Could not load highlights");
   return response.json();
 }
