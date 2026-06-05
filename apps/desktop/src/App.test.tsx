@@ -1404,9 +1404,12 @@ describe("App", () => {
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:8765/api/papers/1/reader-context");
     });
-    expect(await screen.findByText("Page 1")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Reader Paper" })).toBeInTheDocument();
+    expect(await screen.findByText("parsed 路 2 pages")).toBeInTheDocument();
     expect(await screen.findByText("Page one explains the research question.")).toBeInTheDocument();
-    expect(await screen.findByText("Context: Reader Paper - parsed")).toBeInTheDocument();
+    expect(await screen.findByText("Context: Reader Paper 路 parsed")).toBeInTheDocument();
+    expect(screen.queryByText("No selection.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Translate selection" })).not.toBeInTheDocument();
   });
 
   it("opens the managed PDF preview while keeping extracted text selectable", async () => {
@@ -1430,8 +1433,11 @@ describe("App", () => {
     await openReaderPaper();
     selectReaderText("retrieval augmented generation");
 
-    expect(await screen.findByText("Selected text")).toBeInTheDocument();
-    expect(screen.getByText("retrieval augmented generation")).toBeInTheDocument();
+    expect(await screen.findByRole("toolbar", { name: "Selected text actions" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Translate" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Explain" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Highlight" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Note" })).toBeInTheDocument();
   });
 
   it("translates selected text through the selected assistant endpoint", async () => {
@@ -1459,7 +1465,7 @@ describe("App", () => {
 
     await openReaderPaper();
     selectReaderText("retrieval augmented generation");
-    await userEvent.click(await screen.findByRole("button", { name: "Translate selection" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Translate" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -1502,7 +1508,7 @@ describe("App", () => {
 
     await openReaderPaper();
     selectReaderText("retrieval augmented generation");
-    await userEvent.click(await screen.findByRole("button", { name: "Explain selection" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Explain" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -1535,7 +1541,7 @@ describe("App", () => {
 
     await openReaderPaper();
     selectReaderText("retrieval augmented generation");
-    await userEvent.click(await screen.findByRole("button", { name: "Highlight selection" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Highlight" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -1574,7 +1580,7 @@ describe("App", () => {
 
     await openReaderPaper();
     selectReaderText("retrieval augmented generation");
-    await userEvent.click(await screen.findByRole("button", { name: "Save selection as note" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Note" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -1635,7 +1641,7 @@ describe("App", () => {
 
     await openReaderPaper();
     selectReaderText("retrieval augmented generation");
-    await userEvent.click(await screen.findByRole("button", { name: "Translate selection" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Translate" }));
     await screen.findByText("Selected translation");
     await userEvent.click(screen.getByRole("button", { name: "Save answer as note" }));
 

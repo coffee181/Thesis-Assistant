@@ -57,8 +57,9 @@ export function ReaderWorkspace({
         <div>
           <h2>{readerContext.paper.title}</h2>
           <p>
-            {readerContext.document.parse_status} -{" "}
-            {readerContext.document.page_count ?? readerContext.pages.length} pages
+            {`${readerContext.document.parse_status} 路 ${
+              readerContext.document.page_count ?? readerContext.pages.length
+            } pages`}
           </p>
         </div>
       </header>

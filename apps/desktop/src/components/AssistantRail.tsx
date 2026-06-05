@@ -39,7 +39,7 @@ export function AssistantRail({
         <h2>Assistant</h2>
         <p>
           {readerContext
-            ? `Context: ${readerContext.paper.title} - ${readerContext.document.parse_status}`
+            ? `Context: ${readerContext.paper.title} 路 ${readerContext.document.parse_status}`
             : "Context: no paper open"}
         </p>
       </header>
