@@ -17,6 +17,23 @@ class ImportResult:
     imported: bool
 
 
+@dataclass(frozen=True)
+class FolderImportFailure:
+    source_path: str
+    error: str
+
+
+@dataclass(frozen=True)
+class FolderImportResult:
+    source_path: str
+    discovered_count: int
+    imported_count: int
+    skipped_count: int
+    failed_count: int
+    imports: list[ImportResult]
+    failures: list[FolderImportFailure]
+
+
 def import_pdf(
     conn: sqlite3.Connection,
     library_root: Path,
@@ -74,6 +91,55 @@ def import_pdf(
         document=document,
     )
     return ImportResult(paper=paper, document=document, imported=True)
+
+
+def import_pdf_folder(
+    conn: sqlite3.Connection,
+    library_root: Path,
+    source_dir: Path,
+) -> FolderImportResult:
+    source_dir = source_dir.resolve()
+    if not source_dir.exists():
+        raise FileNotFoundError(source_dir)
+    if not source_dir.is_dir():
+        raise ValueError("source path is not a folder")
+
+    pdf_paths = sorted(
+        (path for path in source_dir.rglob("*") if path.suffix.lower() == ".pdf"),
+        key=lambda path: path.as_posix().lower(),
+    )
+    imports: list[ImportResult] = []
+    failures: list[FolderImportFailure] = []
+    imported_count = 0
+    skipped_count = 0
+
+    for pdf_path in pdf_paths:
+        try:
+            result = import_pdf(conn, library_root, pdf_path)
+        except Exception as exc:
+            failures.append(
+                FolderImportFailure(
+                    source_path=str(pdf_path),
+                    error=str(exc)[:500],
+                )
+            )
+            continue
+
+        if result.imported:
+            imports.append(result)
+            imported_count += 1
+        else:
+            skipped_count += 1
+
+    return FolderImportResult(
+        source_path=str(source_dir),
+        discovered_count=len(pdf_paths),
+        imported_count=imported_count,
+        skipped_count=skipped_count,
+        failed_count=len(failures),
+        imports=imports,
+        failures=failures,
+    )
 
 
 def _sha256(path: Path) -> str:

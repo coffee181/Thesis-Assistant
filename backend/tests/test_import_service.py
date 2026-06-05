@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from knowledge_agent.db import connect, init_db
-from knowledge_agent.import_service import import_pdf
+from knowledge_agent.import_service import import_pdf, import_pdf_folder
 from knowledge_agent.models import BibliographyRecord
 from knowledge_agent.repositories import ChunksRepository, DocumentsRepository
 
@@ -127,3 +127,46 @@ def test_import_pdf_extracts_text_chunks_for_valid_pdf(tmp_path: Path, write_pdf
     assert "source grounded answers" in stored_chunks[0].text
     assert hits[0].paper_id == result.paper.id
     assert hits[0].page_number == 2
+
+
+def test_import_pdf_folder_recursively_imports_pdfs_and_skips_duplicates(
+    tmp_path: Path,
+):
+    folder = tmp_path / "folder"
+    nested = folder / "nested"
+    nested.mkdir(parents=True)
+    first = folder / "First.pdf"
+    duplicate = nested / "Duplicate.pdf"
+    second = nested / "Second.pdf"
+    first.write_bytes(b"%PDF-1.4 first")
+    duplicate.write_bytes(b"%PDF-1.4 first")
+    second.write_bytes(b"%PDF-1.4 second")
+    (folder / "notes.txt").write_text("not a PDF", encoding="utf-8")
+    library_root = tmp_path / "library"
+
+    with connect(library_root / "database.sqlite") as conn:
+        init_db(conn)
+        result = import_pdf_folder(conn, library_root, folder)
+
+    assert result.discovered_count == 3
+    assert result.imported_count == 2
+    assert result.skipped_count == 1
+    assert result.failed_count == 0
+    assert [item.paper.title for item in result.imports] == ["First", "Second"]
+
+
+def test_import_pdf_folder_reports_per_file_failures(tmp_path: Path):
+    folder = tmp_path / "folder"
+    folder.mkdir()
+    (folder / "broken.pdf").mkdir()
+    library_root = tmp_path / "library"
+
+    with connect(library_root / "database.sqlite") as conn:
+        init_db(conn)
+        result = import_pdf_folder(conn, library_root, folder)
+
+    assert result.discovered_count == 1
+    assert result.imported_count == 0
+    assert result.skipped_count == 0
+    assert result.failed_count == 1
+    assert result.failures[0].source_path.endswith("broken.pdf")
