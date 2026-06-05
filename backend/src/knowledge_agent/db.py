@@ -31,6 +31,7 @@ def init_db(conn: sqlite3.Connection) -> None:
             citation_key text,
             arxiv_id text,
             entry_type text,
+            favorite integer not null default 0,
             created_at text not null default current_timestamp
         );
 
@@ -137,6 +138,22 @@ def init_db(conn: sqlite3.Connection) -> None:
 
         create index if not exists idx_highlights_paper_id
         on highlights(paper_id);
+
+        create table if not exists tags (
+            id integer primary key autoincrement,
+            name text not null unique,
+            created_at text not null default current_timestamp
+        );
+
+        create table if not exists paper_tags (
+            paper_id integer not null references papers(id) on delete cascade,
+            tag_id integer not null references tags(id) on delete cascade,
+            created_at text not null default current_timestamp,
+            primary key (paper_id, tag_id)
+        );
+
+        create index if not exists idx_paper_tags_tag_id
+        on paper_tags(tag_id);
         """
     )
     _ensure_column(
@@ -158,6 +175,7 @@ def init_db(conn: sqlite3.Connection) -> None:
         ("citation_key", "citation_key text"),
         ("arxiv_id", "arxiv_id text"),
         ("entry_type", "entry_type text"),
+        ("favorite", "favorite integer not null default 0"),
     ]:
         _ensure_column(
             conn,

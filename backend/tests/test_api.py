@@ -1,5 +1,6 @@
 from contextlib import contextmanager
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi.testclient import TestClient
 
@@ -114,6 +115,104 @@ def test_import_pdf_endpoint_reports_missing_file(tmp_path: Path):
 
     assert response.status_code == 404
     assert response.json()["detail"] == "source PDF not found"
+
+
+def test_paper_favorite_endpoint_filters_library(tmp_path: Path):
+    first_source = tmp_path / "Favorite Paper.pdf"
+    second_source = tmp_path / "Ordinary Paper.pdf"
+    first_source.write_bytes(b"%PDF-1.4 favorite")
+    second_source.write_bytes(b"%PDF-1.4 ordinary")
+    library_dir = tmp_path / "library"
+    client = TestClient(create_app(library_dir=library_dir))
+    first_response = client.post(
+        "/api/imports/pdf",
+        json={"source_path": str(first_source)},
+    )
+    client.post("/api/imports/pdf", json={"source_path": str(second_source)})
+    paper_id = first_response.json()["paper"]["id"]
+
+    favorite_response = client.put(
+        f"/api/papers/{paper_id}/favorite",
+        json={"favorite": True},
+    )
+    filtered_response = client.get("/api/papers", params={"favorite": "true"})
+    all_response = client.get("/api/papers")
+
+    assert favorite_response.status_code == 200
+    assert favorite_response.json()["favorite"] is True
+    assert filtered_response.status_code == 200
+    assert [paper["title"] for paper in filtered_response.json()["papers"]] == [
+        "Favorite Paper",
+    ]
+    assert {
+        paper["title"]: paper["favorite"]
+        for paper in all_response.json()["papers"]
+    } == {
+        "Favorite Paper": True,
+        "Ordinary Paper": False,
+    }
+
+
+def test_paper_tags_endpoints_roundtrip(tmp_path: Path):
+    source = tmp_path / "Tagged Paper.pdf"
+    other_source = tmp_path / "Other Paper.pdf"
+    source.write_bytes(b"%PDF-1.4 tagged")
+    other_source.write_bytes(b"%PDF-1.4 other")
+    library_dir = tmp_path / "library"
+    client = TestClient(create_app(library_dir=library_dir))
+    import_response = client.post(
+        "/api/imports/pdf",
+        json={"source_path": str(source)},
+    )
+    client.post("/api/imports/pdf", json={"source_path": str(other_source)})
+    paper_id = import_response.json()["paper"]["id"]
+
+    add_response = client.post(
+        f"/api/papers/{paper_id}/tags",
+        json={"name": " reading "},
+    )
+    filtered_response = client.get("/api/papers", params={"tag": "reading"})
+    remove_response = client.delete(f"/api/papers/{paper_id}/tags/reading")
+    empty_tag_response = client.post(
+        f"/api/papers/{paper_id}/tags",
+        json={"name": "   "},
+    )
+
+    assert add_response.status_code == 200
+    assert add_response.json()["tags"] == ["reading"]
+    assert filtered_response.status_code == 200
+    assert [paper["title"] for paper in filtered_response.json()["papers"]] == [
+        "Tagged Paper",
+    ]
+    assert remove_response.status_code == 200
+    assert remove_response.json()["tags"] == []
+    assert empty_tag_response.status_code == 400
+    assert empty_tag_response.json()["detail"] == "tag name is required"
+
+
+def test_paper_tag_with_slash_can_be_removed(tmp_path: Path):
+    source = tmp_path / "Slash Tagged Paper.pdf"
+    source.write_bytes(b"%PDF-1.4 slash-tagged")
+    library_dir = tmp_path / "library"
+    client = TestClient(create_app(library_dir=library_dir))
+    import_response = client.post(
+        "/api/imports/pdf",
+        json={"source_path": str(source)},
+    )
+    paper_id = import_response.json()["paper"]["id"]
+
+    add_response = client.post(
+        f"/api/papers/{paper_id}/tags",
+        json={"name": "ml/ai"},
+    )
+    remove_response = client.delete(
+        f"/api/papers/{paper_id}/tags/{quote('ml/ai', safe='')}",
+    )
+
+    assert add_response.status_code == 200
+    assert add_response.json()["tags"] == ["ml/ai"]
+    assert remove_response.status_code == 200
+    assert remove_response.json()["tags"] == []
 
 
 def test_library_endpoint_reports_active_library_path(tmp_path: Path):

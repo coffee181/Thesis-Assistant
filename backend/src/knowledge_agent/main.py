@@ -35,6 +35,7 @@ from knowledge_agent.repositories import (
 from knowledge_agent.schemas import (
     AskPaperQuestionRequest,
     AskPaperQuestionResponse,
+    AddTagRequest,
     CitationResponse,
     CreateHighlightRequest,
     CreateNoteRequest,
@@ -56,12 +57,14 @@ from knowledge_agent.schemas import (
     NotesResponse,
     OpenPdfDownloadRequest,
     OpenPdfDownloadResponse,
+    PaperResponse,
     PapersResponse,
     ProviderSettingsRequest,
     ProviderSettingsResponse,
     ReaderContextResponse,
     ReaderPageResponse,
     SelectLibraryRequest,
+    SetFavoriteRequest,
     SelectedTextAssistantRequest,
 )
 
@@ -117,10 +120,59 @@ def create_app(
         return _library_response(config)
 
     @app.get("/api/papers", response_model=PapersResponse)
-    def list_papers() -> PapersResponse:
+    def list_papers(
+        favorite: bool | None = None,
+        tag: str | None = Query(default=None),
+    ) -> PapersResponse:
         with connect(config.database_path) as conn:
-            papers = PapersRepository(conn).list_all()
+            papers = PapersRepository(conn).list_all(favorite=favorite, tag=tag)
         return PapersResponse(papers=papers)
+
+    @app.put(
+        "/api/papers/{paper_id}/favorite",
+        response_model=PaperResponse,
+    )
+    def set_paper_favorite(
+        paper_id: int,
+        request: SetFavoriteRequest,
+    ) -> PaperResponse:
+        try:
+            with connect(config.database_path) as conn:
+                paper = PapersRepository(conn).set_favorite(
+                    paper_id,
+                    request.favorite,
+                )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="paper not found") from exc
+        return PaperResponse.model_validate(paper)
+
+    @app.post(
+        "/api/papers/{paper_id}/tags",
+        response_model=PaperResponse,
+    )
+    def add_paper_tag(paper_id: int, request: AddTagRequest) -> PaperResponse:
+        try:
+            with connect(config.database_path) as conn:
+                paper = PapersRepository(conn).add_tag(paper_id, request.name)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="paper not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return PaperResponse.model_validate(paper)
+
+    @app.delete(
+        "/api/papers/{paper_id}/tags/{tag_name:path}",
+        response_model=PaperResponse,
+    )
+    def remove_paper_tag(paper_id: int, tag_name: str) -> PaperResponse:
+        try:
+            with connect(config.database_path) as conn:
+                paper = PapersRepository(conn).remove_tag(paper_id, tag_name)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="paper not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return PaperResponse.model_validate(paper)
 
     @app.get(
         "/api/settings/provider",

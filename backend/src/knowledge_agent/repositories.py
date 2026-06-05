@@ -80,6 +80,7 @@ class PapersRepository:
                 citation_key,
                 arxiv_id,
                 entry_type,
+                favorite,
                 created_at
             from papers
             where id = ?
@@ -88,9 +89,32 @@ class PapersRepository:
         ).fetchone()
         if row is None:
             raise KeyError(f"paper not found: {paper_id}")
-        return Paper(**dict(row))
+        return self._paper_from_row(row)
 
-    def list_all(self) -> list[Paper]:
+    def list_all(
+        self,
+        favorite: bool | None = None,
+        tag: str | None = None,
+    ) -> list[Paper]:
+        filters = []
+        params: list[object] = []
+        if favorite is not None:
+            filters.append("papers.favorite = ?")
+            params.append(1 if favorite else 0)
+        tag_name = _normalize_tag_name(tag)
+        if tag_name is not None:
+            filters.append(
+                """
+                exists (
+                    select 1
+                    from paper_tags
+                    join tags on tags.id = paper_tags.tag_id
+                    where paper_tags.paper_id = papers.id and tags.name = ?
+                )
+                """
+            )
+            params.append(tag_name)
+        where_clause = f"where {' and '.join(filters)}" if filters else ""
         rows = self._conn.execute(
             """
             select
@@ -104,12 +128,15 @@ class PapersRepository:
                 citation_key,
                 arxiv_id,
                 entry_type,
+                favorite,
                 created_at
             from papers
+            {where_clause}
             order by created_at desc, id desc
-            """
+            """.format(where_clause=where_clause),
+            params,
         ).fetchall()
-        return [Paper(**dict(row)) for row in rows]
+        return [self._paper_from_row(row) for row in rows]
 
     def upsert_metadata(self, record: BibliographyRecord) -> Paper:
         existing = self.find_by_metadata(record)
@@ -192,6 +219,27 @@ class PapersRepository:
         if source_paper_id == target_paper_id:
             return self.get(target_paper_id)
 
+        source_paper = self.get(source_paper_id)
+        target_paper = self.get(target_paper_id)
+        if source_paper.favorite and not target_paper.favorite:
+            self._conn.execute(
+                "update papers set favorite = 1 where id = ?",
+                (target_paper_id,),
+            )
+        self._conn.execute(
+            """
+            insert into paper_tags (paper_id, tag_id)
+            select ?, tag_id
+            from paper_tags
+            where paper_id = ?
+            on conflict(paper_id, tag_id) do nothing
+            """,
+            (target_paper_id, source_paper_id),
+        )
+        self._conn.execute(
+            "delete from paper_tags where paper_id = ?",
+            (source_paper_id,),
+        )
         for table_name in ("documents", "chunks", "notes", "highlights", "qna_entries"):
             self._conn.execute(
                 f"update {table_name} set paper_id = ? where paper_id = ?",
@@ -217,17 +265,18 @@ class PapersRepository:
                     doi,
                     venue,
                     abstract,
-                    citation_key,
-                    arxiv_id,
-                    entry_type,
-                    created_at
+                citation_key,
+                arxiv_id,
+                entry_type,
+                favorite,
+                created_at
                 from papers
                 where doi = ?
                 """,
                 (normalized_doi,),
             ).fetchone()
             if row is not None:
-                return Paper(**dict(row))
+                return self._paper_from_row(row)
 
         if record.citation_key:
             row = self._conn.execute(
@@ -243,6 +292,7 @@ class PapersRepository:
                     citation_key,
                     arxiv_id,
                     entry_type,
+                    favorite,
                     created_at
                 from papers
                 where citation_key = ?
@@ -250,7 +300,7 @@ class PapersRepository:
                 (record.citation_key,),
             ).fetchone()
             if row is not None:
-                return Paper(**dict(row))
+                return self._paper_from_row(row)
 
         row = self._conn.execute(
             """
@@ -265,13 +315,85 @@ class PapersRepository:
                 citation_key,
                 arxiv_id,
                 entry_type,
+                favorite,
                 created_at
             from papers
             where lower(title) = lower(?) and ((year is null and ? is null) or year = ?)
             """,
             (record.title, record.year, record.year),
         ).fetchone()
-        return Paper(**dict(row)) if row is not None else None
+        return self._paper_from_row(row) if row is not None else None
+
+    def set_favorite(self, paper_id: int, favorite: bool) -> Paper:
+        self.get(paper_id)
+        self._conn.execute(
+            "update papers set favorite = ? where id = ?",
+            (1 if favorite else 0, paper_id),
+        )
+        return self.get(paper_id)
+
+    def add_tag(self, paper_id: int, tag_name: str) -> Paper:
+        self.get(paper_id)
+        name = _normalize_tag_name(tag_name)
+        if name is None:
+            raise ValueError("tag name is required")
+        self._conn.execute(
+            """
+            insert into tags (name)
+            values (?)
+            on conflict(name) do nothing
+            """,
+            (name,),
+        )
+        row = self._conn.execute(
+            "select id from tags where name = ?",
+            (name,),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("tag insert failed")
+        self._conn.execute(
+            """
+            insert into paper_tags (paper_id, tag_id)
+            values (?, ?)
+            on conflict(paper_id, tag_id) do nothing
+            """,
+            (paper_id, row["id"]),
+        )
+        return self.get(paper_id)
+
+    def remove_tag(self, paper_id: int, tag_name: str) -> Paper:
+        self.get(paper_id)
+        name = _normalize_tag_name(tag_name)
+        if name is None:
+            raise ValueError("tag name is required")
+        self._conn.execute(
+            """
+            delete from paper_tags
+            where paper_id = ?
+              and tag_id in (select id from tags where name = ?)
+            """,
+            (paper_id, name),
+        )
+        return self.get(paper_id)
+
+    def _paper_from_row(self, row: sqlite3.Row) -> Paper:
+        payload = dict(row)
+        payload["favorite"] = bool(payload.get("favorite", 0))
+        payload["tags"] = self._tags_for_paper(int(payload["id"]))
+        return Paper(**payload)
+
+    def _tags_for_paper(self, paper_id: int) -> list[str]:
+        rows = self._conn.execute(
+            """
+            select tags.name
+            from paper_tags
+            join tags on tags.id = paper_tags.tag_id
+            where paper_tags.paper_id = ?
+            order by lower(tags.name), tags.name
+            """,
+            (paper_id,),
+        ).fetchall()
+        return [str(row["name"]) for row in rows]
 
     def _rebuild_fts_for_paper(self, paper_id: int) -> None:
         rows = self._conn.execute(
@@ -971,4 +1093,11 @@ def _normalize_doi(doi: str | None) -> str | None:
     if doi is None:
         return None
     normalized = doi.strip().lower()
+    return normalized or None
+
+
+def _normalize_tag_name(tag_name: str | None) -> str | None:
+    if tag_name is None:
+        return None
+    normalized = " ".join(tag_name.strip().split())
     return normalized or None

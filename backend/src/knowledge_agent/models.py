@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -14,6 +14,8 @@ class Paper:
     arxiv_id: str | None
     entry_type: str | None
     created_at: str
+    favorite: bool = False
+    tags: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

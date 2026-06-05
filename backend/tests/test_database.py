@@ -172,6 +172,64 @@ def test_upsert_metadata_deduplicates_by_citation_key_without_doi(tmp_path: Path
     assert second.venue == "Library Systems"
 
 
+def test_paper_favorite_roundtrip_and_filter(tmp_path: Path):
+    db_path = tmp_path / "library.sqlite"
+    with connect(db_path) as conn:
+        init_db(conn)
+        papers = PapersRepository(conn)
+        first = papers.create(title="Favorite Paper", year=2026, doi=None)
+        papers.create(title="Ordinary Paper", year=2026, doi=None)
+
+        default_paper = papers.get(first.id)
+        favorite_paper = papers.set_favorite(first.id, True)
+        favorite_papers = papers.list_all(favorite=True)
+        all_papers = papers.list_all()
+
+    assert default_paper.favorite is False
+    assert favorite_paper.favorite is True
+    assert [paper.title for paper in favorite_papers] == ["Favorite Paper"]
+    assert {paper.favorite for paper in all_papers} == {False, True}
+
+
+def test_paper_tags_roundtrip_and_filter(tmp_path: Path):
+    db_path = tmp_path / "library.sqlite"
+    with connect(db_path) as conn:
+        init_db(conn)
+        papers = PapersRepository(conn)
+        first = papers.create(title="Tagged Paper", year=2026, doi=None)
+        papers.create(title="Other Paper", year=2026, doi=None)
+
+        tagged = papers.add_tag(first.id, " reading ")
+        tagged_again = papers.add_tag(first.id, "reading")
+        tagged_papers = papers.list_all(tag="reading")
+        untagged = papers.remove_tag(first.id, "reading")
+
+    assert tagged.tags == ["reading"]
+    assert tagged_again.tags == ["reading"]
+    assert [paper.title for paper in tagged_papers] == ["Tagged Paper"]
+    assert untagged.tags == []
+
+
+def test_merge_papers_preserves_tags(tmp_path: Path):
+    db_path = tmp_path / "library.sqlite"
+    with connect(db_path) as conn:
+        init_db(conn)
+        papers = PapersRepository(conn)
+        source = papers.create(title="Manual Paper", year=2026, doi=None)
+        target = papers.create(title="Metadata Paper", year=2026, doi="10.123/example")
+        papers.set_favorite(source.id, True)
+        papers.add_tag(source.id, "manual")
+        papers.add_tag(target.id, "reading")
+
+        merged = papers.merge_papers(source.id, target.id)
+        all_papers = papers.list_all()
+
+    assert merged.favorite is True
+    assert merged.tags == ["manual", "reading"]
+    assert [paper.id for paper in all_papers] == [target.id]
+    assert all_papers[0].tags == ["manual", "reading"]
+
+
 def test_search_results_repository_replaces_query_results(tmp_path: Path):
     db_path = tmp_path / "library.sqlite"
     with connect(db_path) as conn:

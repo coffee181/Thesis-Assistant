@@ -533,6 +533,130 @@ describe("App", () => {
     expect(await screen.findByText("Jane Doe and John Smith · 2024")).toBeInTheDocument();
   });
 
+  it("paper organization toggles a paper favorite from the library row", async () => {
+    let paperLoads = 0;
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/health")) {
+        return jsonResponse({ status: "ok", service: "knowledge-agent-backend" });
+      }
+      if (url.endsWith("/api/library")) {
+        return jsonResponse(defaultLibraryStatus);
+      }
+      if (url.endsWith("/api/settings/provider")) {
+        return jsonResponse(defaultProviderSettings);
+      }
+      if (url.endsWith("/api/papers/1/favorite") && init?.method === "PUT") {
+        return jsonResponse({ ...readerPaper, title: "Org Paper", favorite: true, tags: [] });
+      }
+      if (url.endsWith("/api/papers")) {
+        paperLoads += 1;
+        return jsonResponse({
+          papers: [
+            {
+              ...readerPaper,
+              title: "Org Paper",
+              favorite: paperLoads > 1,
+              tags: [],
+            },
+          ],
+        });
+      }
+      throw new Error(`Unhandled request: ${url}`);
+    });
+
+    render(<App />);
+    await userEvent.click(await screen.findByRole("button", { name: "Mark Org Paper as favorite" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://127.0.0.1:8765/api/papers/1/favorite",
+        expect.objectContaining({ method: "PUT" }),
+      );
+    });
+    expect(fetchCallBody("/favorite")).toEqual({ favorite: true });
+    expect(await screen.findByRole("button", { name: "Remove Org Paper from favorites" })).toBeInTheDocument();
+  });
+
+  it("paper organization adds a tag to a paper", async () => {
+    let paperLoads = 0;
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/health")) {
+        return jsonResponse({ status: "ok", service: "knowledge-agent-backend" });
+      }
+      if (url.endsWith("/api/library")) {
+        return jsonResponse(defaultLibraryStatus);
+      }
+      if (url.endsWith("/api/settings/provider")) {
+        return jsonResponse(defaultProviderSettings);
+      }
+      if (url.endsWith("/api/papers/1/tags") && init?.method === "POST") {
+        return jsonResponse({ ...readerPaper, title: "Org Paper", favorite: false, tags: ["reading"] });
+      }
+      if (url.endsWith("/api/papers")) {
+        paperLoads += 1;
+        return jsonResponse({
+          papers: [
+            {
+              ...readerPaper,
+              title: "Org Paper",
+              favorite: false,
+              tags: paperLoads > 1 ? ["reading"] : [],
+            },
+          ],
+        });
+      }
+      throw new Error(`Unhandled request: ${url}`);
+    });
+
+    render(<App />);
+    await userEvent.type(await screen.findByLabelText("Tag Org Paper"), "reading");
+    await userEvent.click(screen.getByRole("button", { name: "Add tag to Org Paper" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://127.0.0.1:8765/api/papers/1/tags",
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
+    expect(fetchCallBody("/tags")).toEqual({ name: "reading" });
+    expect(await screen.findByText("reading")).toBeInTheDocument();
+  });
+
+  it("paper organization filters the library by favorite and tag", async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith("/health")) {
+        return jsonResponse({ status: "ok", service: "knowledge-agent-backend" });
+      }
+      if (url.endsWith("/api/library")) {
+        return jsonResponse(defaultLibraryStatus);
+      }
+      if (url.endsWith("/api/settings/provider")) {
+        return jsonResponse(defaultProviderSettings);
+      }
+      if (url.endsWith("/api/papers?favorite=true&tag=reading")) {
+        return jsonResponse({
+          papers: [{ ...readerPaper, title: "Filtered Paper", favorite: true, tags: ["reading"] }],
+        });
+      }
+      if (url.endsWith("/api/papers")) {
+        return jsonResponse({
+          papers: [{ ...readerPaper, title: "Unfiltered Paper", favorite: false, tags: [] }],
+        });
+      }
+      throw new Error(`Unhandled request: ${url}`);
+    });
+
+    render(<App />);
+    await userEvent.click(await screen.findByLabelText("Favorites only"));
+    await userEvent.type(screen.getByLabelText("Filter by tag"), "reading");
+    await userEvent.click(screen.getByRole("button", { name: "Apply library filters" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:8765/api/papers?favorite=true&tag=reading");
+    });
+    expect(await screen.findByText("Filtered Paper")).toBeInTheDocument();
+  });
+
   it("exports BibTeX and displays it in a preview area", async () => {
     fetchMock
       .mockResolvedValueOnce({

@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 
 import {
+  addPaperTag,
   AskPaperQuestionResponse,
   askPaperQuestion,
   askSelectedText,
@@ -33,6 +34,8 @@ import {
   searchLocal,
   selectLibrary,
   SelectedTextAction,
+  removePaperTag,
+  setPaperFavorite,
 } from "./api";
 import "./styles.css";
 
@@ -67,10 +70,13 @@ export default function App() {
   const [notes, setNotes] = useState<Note[]>([]);
   const [highlights, setHighlights] = useState<Highlight[]>([]);
   const [selectionBusy, setSelectionBusy] = useState(false);
+  const [favoriteFilter, setFavoriteFilter] = useState(false);
+  const [tagFilter, setTagFilter] = useState("");
+  const [tagInputs, setTagInputs] = useState<Record<number, string>>({});
   const [message, setMessage] = useState("");
 
-  async function refreshPapers() {
-    const response = await listPapers();
+  async function refreshPapers(filters = { favorite: favoriteFilter, tag: tagFilter }) {
+    const response = await listPapers(filters);
     setPapers(response.papers);
   }
 
@@ -207,6 +213,50 @@ export default function App() {
       setSearchHits(response.hits);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Search failed");
+    }
+  }
+
+  async function handleApplyLibraryFilters(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setMessage("");
+    try {
+      await refreshPapers();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not filter library");
+    }
+  }
+
+  async function handleToggleFavorite(paper: Paper) {
+    setMessage("");
+    try {
+      await setPaperFavorite(paper.id, !paper.favorite);
+      await refreshPapers();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Favorite update failed");
+    }
+  }
+
+  async function handleAddTag(event: FormEvent<HTMLFormElement>, paper: Paper) {
+    event.preventDefault();
+    const tagName = (tagInputs[paper.id] ?? "").trim();
+    if (!tagName) return;
+    setMessage("");
+    try {
+      await addPaperTag(paper.id, tagName);
+      setTagInputs((current) => ({ ...current, [paper.id]: "" }));
+      await refreshPapers();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Tag update failed");
+    }
+  }
+
+  async function handleRemoveTag(paper: Paper, tagName: string) {
+    setMessage("");
+    try {
+      await removePaperTag(paper.id, tagName);
+      await refreshPapers();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Tag removal failed");
     }
   }
 
@@ -545,21 +595,91 @@ export default function App() {
 
         <section className="library-section" aria-labelledby="library-heading">
           <h2 id="library-heading">Library</h2>
+          <form className="library-filters" onSubmit={handleApplyLibraryFilters}>
+            <label className="checkbox-label">
+              <input
+                checked={favoriteFilter}
+                onChange={(event) => setFavoriteFilter(event.target.checked)}
+                type="checkbox"
+              />
+              Favorites only
+            </label>
+            <label htmlFor="tag-filter">Filter by tag</label>
+            <div className="form-row">
+              <input
+                id="tag-filter"
+                value={tagFilter}
+                onChange={(event) => setTagFilter(event.target.value)}
+                placeholder="reading"
+              />
+              <button type="submit">Apply library filters</button>
+            </div>
+          </form>
           <div className="paper-list">
             {papers.length === 0 ? (
               <p className="empty">No papers imported yet.</p>
             ) : (
               papers.map((paper) => (
-                <button
-                  className="paper-row"
-                  key={paper.id}
-                  onClick={() => openPaper(paper)}
-                  type="button"
-                  aria-label={`Open ${paper.title}`}
-                >
-                  <span className="paper-title">{paper.title}</span>
-                  <span className="paper-meta">{paperMetadata(paper)}</span>
-                </button>
+                <article className="paper-row" key={paper.id}>
+                  <button
+                    className="paper-open"
+                    onClick={() => openPaper(paper)}
+                    type="button"
+                    aria-label={`Open ${paper.title}`}
+                  >
+                    <span className="paper-title">{paper.title}</span>
+                    <span className="paper-meta">{paperMetadata(paper)}</span>
+                  </button>
+                  <div className="paper-organization">
+                    <button
+                      className={paper.favorite ? "favorite-button active" : "favorite-button"}
+                      onClick={() => handleToggleFavorite(paper)}
+                      type="button"
+                      aria-label={
+                        paper.favorite
+                          ? `Remove ${paper.title} from favorites`
+                          : `Mark ${paper.title} as favorite`
+                      }
+                    >
+                      {paper.favorite ? "Favorited" : "Favorite"}
+                    </button>
+                    {paper.tags.length > 0 ? (
+                      <div className="tag-list" aria-label={`Tags for ${paper.title}`}>
+                        {paper.tags.map((tag) => (
+                          <button
+                            className="tag-pill"
+                            key={tag}
+                            onClick={() => handleRemoveTag(paper, tag)}
+                            type="button"
+                            aria-label={`Remove tag ${tag} from ${paper.title}`}
+                          >
+                            {tag}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                    <form className="tag-form" onSubmit={(event) => handleAddTag(event, paper)}>
+                      <input
+                        aria-label={`Tag ${paper.title}`}
+                        value={tagInputs[paper.id] ?? ""}
+                        onChange={(event) =>
+                          setTagInputs((current) => ({
+                            ...current,
+                            [paper.id]: event.target.value,
+                          }))
+                        }
+                        placeholder="Add tag"
+                      />
+                      <button
+                        type="submit"
+                        aria-label={`Add tag to ${paper.title}`}
+                        disabled={(tagInputs[paper.id] ?? "").trim().length === 0}
+                      >
+                        Add
+                      </button>
+                    </form>
+                  </div>
+                </article>
               ))
             )}
           </div>
@@ -874,6 +994,8 @@ function paperFromSearchHit(hit: SearchHit): Paper {
     citation_key: null,
     arxiv_id: null,
     entry_type: null,
+    favorite: false,
+    tags: [],
     created_at: "",
   };
 }

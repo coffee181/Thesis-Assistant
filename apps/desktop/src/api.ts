@@ -11,6 +11,8 @@ export type Paper = {
   citation_key: string | null;
   arxiv_id: string | null;
   entry_type: string | null;
+  favorite: boolean;
+  tags: string[];
   created_at: string;
 };
 
@@ -224,10 +226,67 @@ export async function getHealth(): Promise<HealthResponse> {
   return response.json();
 }
 
-export async function listPapers(): Promise<PapersResponse> {
-  const response = await fetch(`${API_BASE}/api/papers`);
+function normalizePaper(paper: Paper): Paper {
+  return {
+    ...paper,
+    favorite: paper.favorite ?? false,
+    tags: paper.tags ?? [],
+  };
+}
+
+export type PaperListFilters = {
+  favorite?: boolean;
+  tag?: string;
+};
+
+export async function listPapers(filters: PaperListFilters = {}): Promise<PapersResponse> {
+  const params = new URLSearchParams();
+  if (filters.favorite) params.set("favorite", "true");
+  const tag = filters.tag?.trim();
+  if (tag) params.set("tag", tag);
+  const query = params.toString();
+  const response = await fetch(`${API_BASE}/api/papers${query ? `?${query}` : ""}`);
   if (!response.ok) throw new Error("Could not load papers");
-  return response.json();
+  const payload = (await response.json()) as PapersResponse;
+  return { papers: payload.papers.map(normalizePaper) };
+}
+
+export async function setPaperFavorite(paperId: number, favorite: boolean): Promise<Paper> {
+  const response = await fetch(`${API_BASE}/api/papers/${paperId}/favorite`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ favorite }),
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({ detail: "Favorite update failed" }));
+    throw new Error(payload.detail ?? "Favorite update failed");
+  }
+  return normalizePaper(await response.json());
+}
+
+export async function addPaperTag(paperId: number, name: string): Promise<Paper> {
+  const response = await fetch(`${API_BASE}/api/papers/${paperId}/tags`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({ detail: "Tag update failed" }));
+    throw new Error(payload.detail ?? "Tag update failed");
+  }
+  return normalizePaper(await response.json());
+}
+
+export async function removePaperTag(paperId: number, name: string): Promise<Paper> {
+  const response = await fetch(
+    `${API_BASE}/api/papers/${paperId}/tags/${encodeURIComponent(name)}`,
+    { method: "DELETE" },
+  );
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({ detail: "Tag removal failed" }));
+    throw new Error(payload.detail ?? "Tag removal failed");
+  }
+  return normalizePaper(await response.json());
 }
 
 export async function getLibrary(): Promise<LibraryStatus> {

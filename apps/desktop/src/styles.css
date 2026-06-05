@@ -156,14 +156,47 @@ textarea {
   margin: 0 0 8px;
 }
 
+.library-filters {
+  border: 1px solid #d7dde5;
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 12px;
+}
+
+.library-filters label,
+.checkbox-label {
+  color: #334155;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.checkbox-label {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.checkbox-label input {
+  width: auto;
+}
+
+.library-filters input {
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  box-sizing: border-box;
+  padding: 9px 10px;
+  width: 100%;
+}
+
 .paper-row {
   background: #ffffff;
   border: 1px solid #d7dde5;
   border-radius: 8px;
   color: inherit;
-  cursor: pointer;
   display: grid;
-  gap: 6px;
+  gap: 10px;
   padding: 14px 16px;
   text-align: left;
   width: 100%;
@@ -172,6 +205,18 @@ textarea {
 .paper-row:hover,
 .search-hit:hover {
   border-color: #94a3b8;
+}
+
+.paper-open {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: grid;
+  gap: 6px;
+  padding: 0;
+  text-align: left;
+  width: 100%;
 }
 
 .paper-title {
@@ -183,6 +228,63 @@ textarea {
 .empty {
   color: #64748b;
   margin: 0;
+}
+
+.paper-organization {
+  display: grid;
+  gap: 8px;
+}
+
+.favorite-button,
+.tag-form button,
+.tag-pill {
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  cursor: pointer;
+  padding: 7px 9px;
+}
+
+.favorite-button,
+.tag-form button {
+  background: #1f2937;
+  color: #ffffff;
+}
+
+.favorite-button.active {
+  background: #166534;
+  border-color: #166534;
+}
+
+.tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tag-pill {
+  background: #f8fafc;
+  color: #334155;
+  font-size: 12px;
+}
+
+.tag-form {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.tag-form input {
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  box-sizing: border-box;
+  min-width: 0;
+  padding: 7px 9px;
+  width: 100%;
+}
+
+.tag-form button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .search-list {

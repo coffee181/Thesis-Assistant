@@ -15,6 +15,8 @@ class PaperResponse(BaseModel):
     arxiv_id: str | None
     entry_type: str | None
     created_at: str
+    favorite: bool
+    tags: list[str]
 
 
 class DocumentResponse(BaseModel):
@@ -88,6 +90,14 @@ class ExportBibliographyResponse(BaseModel):
 
 class PapersResponse(BaseModel):
     papers: list[PaperResponse]
+
+
+class SetFavoriteRequest(BaseModel):
+    favorite: bool
+
+
+class AddTagRequest(BaseModel):
+    name: str
 
 
 class SearchResultResponse(BaseModel):
