@@ -1632,6 +1632,41 @@ describe("App", () => {
     expect(screen.queryByText("secret-key")).not.toBeInTheDocument();
   });
 
+  it("opens a cited page from an assistant citation", async () => {
+    queueInitialReaderLoad(configuredProviderSettings);
+    queueOpenReaderContext();
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        answer: "The method uses retrieval augmented generation.",
+        mode: "strict",
+        provider: "openai_compatible",
+        qna_id: 11,
+        citations: [
+          {
+            chunk_id: 5,
+            paper_id: 1,
+            title: "Reader Paper",
+            page_number: 2,
+            snippet: "The cited snippet says retrieval augmented generation.",
+            source_span: "page:2:chars:0-47",
+          },
+        ],
+      }),
+    });
+
+    await openReaderPaper();
+    await userEvent.type(await screen.findByLabelText("Question"), "What method is used?");
+    await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Open citation page 2" }));
+
+    expect(screen.getByTitle("PDF reader for Reader Paper")).toHaveAttribute(
+      "src",
+      "http://127.0.0.1:8765/api/papers/1/pdf#page=2",
+    );
+    expect(screen.getByLabelText("Reader page 2")).toHaveAttribute("aria-current", "page");
+  });
+
   it("asks a current-paper question and displays cited snippets", async () => {
     fetchMock
       .mockResolvedValueOnce({

@@ -58,6 +58,7 @@ export default function App() {
   const [externalResults, setExternalResults] = useState<SearchResultRecord[]>([]);
   const [pendingDownloads, setPendingDownloads] = useState<Record<number, string>>({});
   const [readerContext, setReaderContext] = useState<ReaderContext | null>(null);
+  const [activeReaderPage, setActiveReaderPage] = useState<number | null>(null);
   const [providerSettings, setProviderSettings] = useState<ProviderSettings | null>(null);
   const [provider, setProvider] = useState("none");
   const [baseUrl, setBaseUrl] = useState("");
@@ -144,6 +145,7 @@ export default function App() {
       setLibraryPath(library.library_dir);
       setPapers([]);
       setReaderContext(null);
+      setActiveReaderPage(null);
       clearSelection();
       setNotes([]);
       setHighlights([]);
@@ -356,6 +358,7 @@ export default function App() {
     setNotes([]);
     setHighlights([]);
     setAssistantAnswer(null);
+    setActiveReaderPage(null);
     try {
       const [context, notesResponse, highlightsResponse] = await Promise.all([
         getReaderContext(paper.id),
@@ -408,6 +411,26 @@ export default function App() {
     setSelectedText(selection);
     setSelectedPageNumber(pageNumber);
     setSelectedSourceSpan(`page:${pageNumber}:selection`);
+  }
+
+  function pdfPreviewUrl(): string {
+    if (!readerContext) return "";
+    const baseUrl = paperPdfUrl(readerContext.paper.id);
+    return activeReaderPage === null ? baseUrl : `${baseUrl}#page=${activeReaderPage}`;
+  }
+
+  function openReaderPage(pageNumber: number) {
+    setActiveReaderPage(pageNumber);
+    const scrollPageIntoView = () => {
+      document
+        .getElementById(`reader-page-${pageNumber}`)
+        ?.scrollIntoView?.({ block: "start" });
+    };
+    if (typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(scrollPageIntoView);
+    } else {
+      scrollPageIntoView();
+    }
   }
 
   async function handleSelectionAction(action: SelectedTextAction) {
@@ -829,7 +852,7 @@ export default function App() {
           <div className="reader-content">
             <iframe
               className="pdf-preview"
-              src={paperPdfUrl(readerContext.paper.id)}
+              src={pdfPreviewUrl()}
               title={`PDF reader for ${readerContext.paper.title}`}
             />
             <section className="extracted-text-layer" aria-label="Extracted text">
@@ -838,7 +861,16 @@ export default function App() {
               ) : (
                 readerContext.pages.map((page) => (
                   <article
-                    className="reader-page"
+                    aria-current={
+                      activeReaderPage === page.page_number ? "page" : undefined
+                    }
+                    aria-label={`Reader page ${page.page_number}`}
+                    className={
+                      activeReaderPage === page.page_number
+                        ? "reader-page active"
+                        : "reader-page"
+                    }
+                    id={`reader-page-${page.page_number}`}
                     key={page.page_number}
                     onMouseUp={() => handleReaderPageMouseUp(page.page_number)}
                   >
@@ -993,13 +1025,16 @@ export default function App() {
               </div>
               <div className="citation-list">
                 {assistantAnswer.citations.map((citation) => (
-                  <div
+                  <button
+                    aria-label={`Open citation page ${citation.page_number}`}
                     className="citation"
                     key={`${citation.chunk_id ?? "selection"}-${citation.page_number}-${citation.source_span}`}
+                    onClick={() => openReaderPage(citation.page_number)}
+                    type="button"
                   >
                     <strong>Citation Page {citation.page_number}</strong>
                     <p>{citation.snippet}</p>
-                  </div>
+                  </button>
                 ))}
               </div>
             </article>

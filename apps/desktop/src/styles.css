@@ -423,6 +423,11 @@ textarea {
   padding: 18px;
 }
 
+.reader-page.active {
+  border-color: #2563eb;
+  box-shadow: inset 4px 0 0 #2563eb;
+}
+
 .reader-page h3 {
   font-size: 14px;
   margin: 0 0 12px;
@@ -574,7 +579,15 @@ textarea {
   background: #f8fafc;
   border: 1px solid #d7dde5;
   border-radius: 8px;
+  cursor: pointer;
   padding: 10px;
+  text-align: left;
+  width: 100%;
+}
+
+.citation:focus-visible {
+  outline: 3px solid #93c5fd;
+  outline-offset: 2px;
 }
 
 .citation strong {
