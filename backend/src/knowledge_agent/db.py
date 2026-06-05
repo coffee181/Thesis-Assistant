@@ -71,6 +71,18 @@ def init_db(conn: sqlite3.Connection) -> None:
             page_number unindexed
         );
 
+        create table if not exists chunk_vectors (
+            chunk_id integer primary key references chunks(id) on delete cascade,
+            paper_id integer not null references papers(id) on delete cascade,
+            document_id integer not null references documents(id) on delete cascade,
+            vector_id text not null unique,
+            embedding_model text not null,
+            updated_at text not null default current_timestamp
+        );
+
+        create index if not exists idx_chunk_vectors_document_id
+        on chunk_vectors(document_id);
+
         create table if not exists settings (
             key text primary key,
             value text not null,

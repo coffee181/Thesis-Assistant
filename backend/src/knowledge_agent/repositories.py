@@ -241,7 +241,14 @@ class PapersRepository:
             "delete from paper_tags where paper_id = ?",
             (source_paper_id,),
         )
-        for table_name in ("documents", "chunks", "notes", "highlights", "qna_entries"):
+        for table_name in (
+            "documents",
+            "chunks",
+            "chunk_vectors",
+            "notes",
+            "highlights",
+            "qna_entries",
+        ):
             self._conn.execute(
                 f"update {table_name} set paper_id = ? where paper_id = ?",
                 (target_paper_id, source_paper_id),
@@ -973,6 +980,7 @@ class ChunksRepository:
         chunks: list[ChunkInput],
     ) -> list[Chunk]:
         paper_title = self._paper_title(paper_id)
+        self._conn.execute("delete from chunk_vectors where document_id = ?", (document_id,))
         self._conn.execute("delete from chunks_fts where document_id = ?", (document_id,))
         self._conn.execute("delete from chunks where document_id = ?", (document_id,))
 
@@ -1025,6 +1033,51 @@ class ChunksRepository:
 
         return self.list_for_paper(paper_id)
 
+    def replace_vector_mappings(
+        self,
+        document_id: int,
+        mappings: list[tuple[int, str, str]],
+    ) -> None:
+        self._conn.execute("delete from chunk_vectors where document_id = ?", (document_id,))
+        for chunk_id, vector_id, embedding_model in mappings:
+            row = self._conn.execute(
+                """
+                select paper_id, document_id
+                from chunks
+                where id = ? and document_id = ?
+                """,
+                (chunk_id, document_id),
+            ).fetchone()
+            if row is None:
+                continue
+            self._conn.execute(
+                """
+                insert into chunk_vectors (
+                    chunk_id,
+                    paper_id,
+                    document_id,
+                    vector_id,
+                    embedding_model,
+                    updated_at
+                )
+                values (?, ?, ?, ?, ?, current_timestamp)
+                """,
+                (
+                    chunk_id,
+                    row["paper_id"],
+                    row["document_id"],
+                    vector_id,
+                    embedding_model,
+                ),
+            )
+
+    def vector_mapping_count_for_document(self, document_id: int) -> int:
+        row = self._conn.execute(
+            "select count(*) as count from chunk_vectors where document_id = ?",
+            (document_id,),
+        ).fetchone()
+        return int(row["count"]) if row is not None else 0
+
     def list_for_paper(self, paper_id: int) -> list[Chunk]:
         rows = self._conn.execute(
             """
@@ -1045,7 +1098,60 @@ class ChunksRepository:
         ).fetchall()
         return [Chunk(**dict(row)) for row in rows]
 
-    def search(self, query: str, limit: int = 25) -> list[SearchHit]:
+    def list_for_document(self, document_id: int) -> list[Chunk]:
+        rows = self._conn.execute(
+            """
+            select
+                id,
+                paper_id,
+                document_id,
+                page_number,
+                chunk_index,
+                text,
+                source_span,
+                created_at
+            from chunks
+            where document_id = ?
+            order by page_number asc, chunk_index asc, id asc
+            """,
+            (document_id,),
+        ).fetchall()
+        return [Chunk(**dict(row)) for row in rows]
+
+    def get_many(self, chunk_ids: list[int]) -> list[Chunk]:
+        if not chunk_ids:
+            return []
+        unique_chunk_ids = list(dict.fromkeys(chunk_ids))
+        placeholders = ", ".join("?" for _ in unique_chunk_ids)
+        rows = self._conn.execute(
+            f"""
+            select
+                id,
+                paper_id,
+                document_id,
+                page_number,
+                chunk_index,
+                text,
+                source_span,
+                created_at
+            from chunks
+            where id in ({placeholders})
+            """,
+            unique_chunk_ids,
+        ).fetchall()
+        chunks_by_id = {int(row["id"]): Chunk(**dict(row)) for row in rows}
+        return [
+            chunks_by_id[chunk_id]
+            for chunk_id in unique_chunk_ids
+            if chunk_id in chunks_by_id
+        ]
+
+    def search(
+        self,
+        query: str,
+        limit: int = 25,
+        semantic_chunk_ids: list[int] | None = None,
+    ) -> list[SearchHit]:
         normalized_query = query.strip()
         if not normalized_query:
             return []
@@ -1072,6 +1178,23 @@ class ChunksRepository:
         if len(hits) >= limit:
             return hits
 
+        seen_chunk_ids = {
+            hit.chunk_id
+            for hit in hits
+            if hit.chunk_id is not None
+        }
+        semantic_hits = self._chunk_hits_by_ids(
+            [
+                chunk_id
+                for chunk_id in semantic_chunk_ids or []
+                if chunk_id not in seen_chunk_ids
+            ],
+            limit=limit - len(hits),
+        )
+        hits = [*hits, *semantic_hits]
+        if len(hits) >= limit:
+            return hits
+
         seen_paper_ids = {hit.paper_id for hit in hits}
         metadata_hits = self._metadata_search_hits(
             normalized_query,
@@ -1079,6 +1202,46 @@ class ChunksRepository:
             excluded_paper_ids=seen_paper_ids,
         )
         return [*hits, *metadata_hits]
+
+    def _chunk_hits_by_ids(
+        self,
+        chunk_ids: list[int],
+        limit: int,
+    ) -> list[SearchHit]:
+        if limit <= 0:
+            return []
+        chunks = self.get_many(chunk_ids[:limit])
+        if not chunks:
+            return []
+        paper_ids = list({chunk.paper_id for chunk in chunks})
+        placeholders = ", ".join("?" for _ in paper_ids)
+        rows = self._conn.execute(
+            f"""
+            select id, title, year, doi
+            from papers
+            where id in ({placeholders})
+            """,
+            paper_ids,
+        ).fetchall()
+        papers_by_id = {int(row["id"]): row for row in rows}
+        hits = []
+        for chunk in chunks:
+            paper = papers_by_id.get(chunk.paper_id)
+            if paper is None:
+                continue
+            hits.append(
+                SearchHit(
+                    paper_id=chunk.paper_id,
+                    title=str(paper["title"]),
+                    year=paper["year"],
+                    doi=paper["doi"],
+                    document_id=chunk.document_id,
+                    chunk_id=chunk.id,
+                    page_number=chunk.page_number,
+                    snippet=chunk.text,
+                )
+            )
+        return hits
 
     def _metadata_search_hits(
         self,

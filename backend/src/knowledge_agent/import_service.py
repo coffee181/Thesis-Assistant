@@ -5,9 +5,10 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
-from knowledge_agent.models import BibliographyRecord, Document, Paper
+from knowledge_agent.models import BibliographyRecord, Chunk, Document, Paper
 from knowledge_agent.pdf_text import chunk_pages, extract_pdf_pages
 from knowledge_agent.repositories import ChunksRepository, DocumentsRepository, PapersRepository
+from knowledge_agent.vector_index import LocalVectorIndex
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,7 @@ def import_pdf(
     library_root: Path,
     source_path: Path,
     metadata: BibliographyRecord | None = None,
+    vector_index_path: Path | None = None,
 ) -> ImportResult:
     source_path = source_path.resolve()
     if not source_path.exists():
@@ -64,6 +66,11 @@ def import_pdf(
                 paper = papers.update_metadata(metadata_paper.id, metadata)
             else:
                 paper = papers.update_metadata(existing.paper_id, metadata)
+        _retry_missing_vector_index(
+            conn=conn,
+            document=existing,
+            vector_index_path=vector_index_path or _default_vector_index_path(library_root),
+        )
         return ImportResult(
             paper=paper,
             document=existing,
@@ -122,6 +129,7 @@ def import_pdf(
         library_root=library_root,
         paper=paper,
         document=document,
+        vector_index_path=vector_index_path or _default_vector_index_path(library_root),
     )
     return ImportResult(paper=paper, document=document, imported=True)
 
@@ -206,16 +214,25 @@ def _parse_imported_document(
     library_root: Path,
     paper: Paper,
     document: Document,
+    vector_index_path: Path | None,
 ) -> Document:
     documents = DocumentsRepository(conn)
     try:
         pages = extract_pdf_pages(library_root / document.library_path)
         chunks = chunk_pages(pages)
-        ChunksRepository(conn).replace_for_document(
+        chunks_repository = ChunksRepository(conn)
+        stored_chunks = chunks_repository.replace_for_document(
             document_id=document.id,
             paper_id=paper.id,
             chunks=chunks,
         )
+        if vector_index_path is not None:
+            _index_document_chunks(
+                chunks_repository=chunks_repository,
+                vector_index_path=vector_index_path,
+                document_id=document.id,
+                chunks=stored_chunks,
+            )
         return documents.update_parse_result(
             document_id=document.id,
             page_count=len(pages),
@@ -229,3 +246,45 @@ def _parse_imported_document(
             parse_status="failed",
             parse_error=str(exc)[:500],
         )
+
+
+def _default_vector_index_path(library_root: Path) -> Path:
+    return library_root / "indexes" / "vectors" / "chunks.json"
+
+
+def _index_document_chunks(
+    chunks_repository: ChunksRepository,
+    vector_index_path: Path,
+    document_id: int,
+    chunks: list[Chunk],
+) -> None:
+    try:
+        mappings = LocalVectorIndex(vector_index_path).replace_document_entries(
+            document_id=document_id,
+            entries=[
+                (chunk.id, chunk.text)
+                for chunk in chunks
+            ],
+        )
+        chunks_repository.replace_vector_mappings(document_id, mappings)
+    except Exception:
+        chunks_repository.replace_vector_mappings(document_id, [])
+
+
+def _retry_missing_vector_index(
+    conn: sqlite3.Connection,
+    document: Document,
+    vector_index_path: Path,
+) -> None:
+    chunks_repository = ChunksRepository(conn)
+    if chunks_repository.vector_mapping_count_for_document(document.id) > 0:
+        return
+    chunks = chunks_repository.list_for_document(document.id)
+    if not chunks:
+        return
+    _index_document_chunks(
+        chunks_repository=chunks_repository,
+        vector_index_path=vector_index_path,
+        document_id=document.id,
+        chunks=chunks,
+    )

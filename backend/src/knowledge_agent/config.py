@@ -11,6 +11,10 @@ class AppConfig:
     def database_path(self) -> Path:
         return self.library_dir / "database.sqlite"
 
+    @property
+    def vector_index_path(self) -> Path:
+        return self.library_dir / "indexes" / "vectors" / "chunks.json"
+
 
 def load_config(library_dir: Path | None = None) -> AppConfig:
     configured = library_dir or Path(

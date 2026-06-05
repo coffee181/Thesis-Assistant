@@ -70,6 +70,7 @@ from knowledge_agent.schemas import (
     SetFavoriteRequest,
     SelectedTextAssistantRequest,
 )
+from knowledge_agent.vector_index import LocalVectorIndex
 
 
 def create_app(
@@ -208,8 +209,18 @@ def create_app(
     @app.get("/api/search/local", response_model=LocalSearchResponse)
     def search_local(q: str = Query(min_length=1)) -> LocalSearchResponse:
         query = q.strip()
+        semantic_chunk_ids = [
+            result.chunk_id
+            for result in LocalVectorIndex(config.vector_index_path).search(
+                query,
+                limit=25,
+            )
+        ]
         with connect(config.database_path) as conn:
-            hits = ChunksRepository(conn).search(query)
+            hits = ChunksRepository(conn).search(
+                query,
+                semantic_chunk_ids=semantic_chunk_ids,
+            )
         return LocalSearchResponse(query=query, hits=hits)
 
     @app.get("/api/search/external", response_model=ExternalSearchResponse)

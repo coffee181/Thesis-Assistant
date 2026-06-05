@@ -209,11 +209,13 @@ def test_import_pdf_moves_duplicate_hash_chunks_to_existing_metadata_paper(
         chunks = ChunksRepository(conn)
         moved_chunks = chunks.list_for_paper(metadata_paper.id)
         old_chunks = chunks.list_for_paper(hash_match.paper.id)
+        vector_count = chunks.vector_mapping_count_for_document(result.document.id)
         hits = chunks.search("retrieval grounded")
 
     assert result.paper.id == metadata_paper.id
     assert moved_chunks[0].paper_id == metadata_paper.id
     assert old_chunks == []
+    assert vector_count == len(moved_chunks)
     assert hits[0].paper_id == metadata_paper.id
     assert hits[0].title == "Local Knowledge Agents"
 
@@ -244,6 +246,110 @@ def test_import_pdf_extracts_text_chunks_for_valid_pdf(tmp_path: Path, write_pdf
     assert "source grounded answers" in stored_chunks[0].text
     assert hits[0].paper_id == result.paper.id
     assert hits[0].page_number == 2
+
+
+def test_import_pdf_builds_vector_index_for_chunks(tmp_path: Path, write_pdf):
+    source = write_pdf(
+        tmp_path / "Vector Indexed Paper.pdf",
+        [
+            "The method uses retrieval augmented generation for source grounded answers.",
+            "The evaluation measures contrastive retrieval quality on local papers.",
+        ],
+    )
+    library_root = tmp_path / "library"
+    vector_index_path = library_root / "indexes" / "vectors" / "chunks.json"
+
+    with connect(library_root / "database.sqlite") as conn:
+        init_db(conn)
+
+        result = import_pdf(
+            conn,
+            library_root,
+            source,
+            vector_index_path=vector_index_path,
+        )
+        chunks = ChunksRepository(conn)
+        stored_chunks = chunks.list_for_paper(result.paper.id)
+        vector_count = chunks.vector_mapping_count_for_document(result.document.id)
+
+    assert vector_index_path.exists()
+    assert vector_count == len(stored_chunks)
+
+
+def test_import_pdf_keeps_parse_success_when_vector_indexing_fails(
+    tmp_path: Path,
+    write_pdf,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    source = write_pdf(
+        tmp_path / "Vector Failure Paper.pdf",
+        ["The method uses retrieval augmented generation."],
+    )
+    library_root = tmp_path / "library"
+
+    def fail_vector_indexing(self, document_id, entries):
+        raise OSError("vector index unavailable")
+
+    monkeypatch.setattr(
+        "knowledge_agent.vector_index.LocalVectorIndex.replace_document_entries",
+        fail_vector_indexing,
+    )
+
+    with connect(library_root / "database.sqlite") as conn:
+        init_db(conn)
+
+        result = import_pdf(conn, library_root, source)
+        document = DocumentsRepository(conn).get(result.document.id)
+        chunks = ChunksRepository(conn).list_for_paper(result.paper.id)
+
+    assert document.parse_status == "parsed"
+    assert document.parse_error is None
+    assert len(chunks) == 1
+
+
+def test_import_pdf_duplicate_retries_missing_vector_index(
+    tmp_path: Path,
+    write_pdf,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    source = write_pdf(
+        tmp_path / "Retry Vector Paper.pdf",
+        ["The method uses retrieval augmented generation."],
+    )
+    library_root = tmp_path / "library"
+    original_replace = (
+        __import__(
+            "knowledge_agent.vector_index",
+            fromlist=["LocalVectorIndex"],
+        )
+        .LocalVectorIndex
+        .replace_document_entries
+    )
+    call_count = 0
+
+    def fail_once(self, document_id, entries):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise OSError("vector index unavailable")
+        return original_replace(self, document_id, entries)
+
+    monkeypatch.setattr(
+        "knowledge_agent.vector_index.LocalVectorIndex.replace_document_entries",
+        fail_once,
+    )
+
+    with connect(library_root / "database.sqlite") as conn:
+        init_db(conn)
+
+        first = import_pdf(conn, library_root, source)
+        second = import_pdf(conn, library_root, source)
+        chunks = ChunksRepository(conn)
+        vector_count = chunks.vector_mapping_count_for_document(first.document.id)
+
+    assert first.imported is True
+    assert second.imported is False
+    assert vector_count == 1
 
 
 def test_import_pdf_folder_recursively_imports_pdfs_and_skips_duplicates(

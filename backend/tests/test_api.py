@@ -734,6 +734,30 @@ def test_local_search_returns_metadata_only_hits(tmp_path: Path):
     assert "10.1234/traceable" in hit["snippet"]
 
 
+def test_local_search_uses_semantic_vector_fallback(tmp_path: Path, write_pdf):
+    source = write_pdf(
+        tmp_path / "Semantic Paper.pdf",
+        [
+            "The method studies retrieval augmented generation for local papers.",
+            "The appendix discusses ceramic kiln temperatures.",
+        ],
+    )
+    library_dir = tmp_path / "library"
+    client = TestClient(create_app(library_dir=library_dir))
+    client.post("/api/imports/pdf", json={"source_path": str(source)})
+
+    response = client.get(
+        "/api/search/local",
+        params={"q": "retrieval generation"},
+    )
+
+    assert response.status_code == 200
+    hit = response.json()["hits"][0]
+    assert hit["title"] == "Semantic Paper"
+    assert hit["page_number"] == 1
+    assert "retrieval augmented generation" in hit["snippet"]
+
+
 def test_reader_context_returns_current_paper_pages(tmp_path: Path, write_pdf):
     source = write_pdf(
         tmp_path / "Reader Paper.pdf",

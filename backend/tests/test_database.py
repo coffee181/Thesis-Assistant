@@ -45,6 +45,7 @@ def test_init_db_creates_tables(tmp_path: Path):
         "search_results",
         "notes",
         "highlights",
+        "chunk_vectors",
     }.issubset(table_names)
     assert {
         "authors",
@@ -281,6 +282,47 @@ def test_merge_papers_preserves_tags(tmp_path: Path):
     assert all_papers[0].tags == ["manual", "reading"]
 
 
+def test_merge_papers_preserves_vector_mappings(tmp_path: Path):
+    db_path = tmp_path / "library.sqlite"
+    with connect(db_path) as conn:
+        init_db(conn)
+        papers = PapersRepository(conn)
+        documents = DocumentsRepository(conn)
+        chunks = ChunksRepository(conn)
+        source = papers.create(title="Manual Paper", year=2026, doi=None)
+        target = papers.create(title="Metadata Paper", year=2026, doi="10.123/example")
+        document = documents.create(
+            paper_id=source.id,
+            library_path="papers/manual/paper.pdf",
+            file_hash="hash-manual",
+            page_count=1,
+        )
+        stored_chunks = chunks.replace_for_document(
+            document_id=document.id,
+            paper_id=source.id,
+            chunks=[
+                ChunkInput(
+                    page_number=1,
+                    chunk_index=0,
+                    text="retrieval augmented generation",
+                    source_span="page:1:chars:0-30",
+                )
+            ],
+        )
+        chunks.replace_vector_mappings(
+            document_id=document.id,
+            mappings=[
+                (stored_chunks[0].id, "vector-one", "local-hashing-v1"),
+            ],
+        )
+
+        merged = papers.merge_papers(source.id, target.id)
+        vector_count = chunks.vector_mapping_count_for_document(document.id)
+
+    assert merged.id == target.id
+    assert vector_count == 1
+
+
 def test_search_results_repository_replaces_query_results(tmp_path: Path):
     db_path = tmp_path / "library.sqlite"
     with connect(db_path) as conn:
@@ -469,6 +511,58 @@ def test_chunks_replace_list_and_search(tmp_path: Path):
     assert hits[0].title == "Neural Retrieval Systems"
     assert hits[0].page_number == 2
     assert "Contrastive retrieval" in hits[0].snippet
+
+
+def test_chunks_replace_vector_mappings_for_document(tmp_path: Path):
+    db_path = tmp_path / "library.sqlite"
+    with connect(db_path) as conn:
+        init_db(conn)
+        papers = PapersRepository(conn)
+        documents = DocumentsRepository(conn)
+        chunks = ChunksRepository(conn)
+        paper = papers.create(title="Vector Paper", year=2026, doi=None)
+        document = documents.create(
+            paper_id=paper.id,
+            library_path="papers/vector/paper.pdf",
+            file_hash="hash-vector",
+            page_count=1,
+        )
+        stored_chunks = chunks.replace_for_document(
+            document_id=document.id,
+            paper_id=paper.id,
+            chunks=[
+                ChunkInput(
+                    page_number=1,
+                    chunk_index=0,
+                    text="retrieval augmented generation",
+                    source_span="page:1:chars:0-30",
+                ),
+                ChunkInput(
+                    page_number=1,
+                    chunk_index=1,
+                    text="semantic vector search",
+                    source_span="page:1:chars:31-53",
+                ),
+            ],
+        )
+
+        chunks.replace_vector_mappings(
+            document_id=document.id,
+            mappings=[
+                (stored_chunks[0].id, "vector-old", "local-hashing-v1"),
+                (stored_chunks[1].id, "vector-two", "local-hashing-v1"),
+            ],
+        )
+        chunks.replace_vector_mappings(
+            document_id=document.id,
+            mappings=[
+                (stored_chunks[1].id, "vector-new", "local-hashing-v1"),
+            ],
+        )
+
+        count = chunks.vector_mapping_count_for_document(document.id)
+
+    assert count == 1
 
 
 def test_local_search_finds_metadata_only_papers(tmp_path: Path):
