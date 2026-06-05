@@ -85,9 +85,9 @@ export type SearchHit = {
   title: string;
   year: number | null;
   doi: string | null;
-  document_id: number;
-  chunk_id: number;
-  page_number: number;
+  document_id: number | null;
+  chunk_id: number | null;
+  page_number: number | null;
   snippet: string;
 };
 

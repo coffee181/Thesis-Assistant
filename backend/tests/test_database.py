@@ -471,6 +471,37 @@ def test_chunks_replace_list_and_search(tmp_path: Path):
     assert "Contrastive retrieval" in hits[0].snippet
 
 
+def test_local_search_finds_metadata_only_papers(tmp_path: Path):
+    db_path = tmp_path / "library.sqlite"
+    with connect(db_path) as conn:
+        init_db(conn)
+        papers = PapersRepository(conn)
+        chunks = ChunksRepository(conn)
+        paper = papers.upsert_metadata(
+            BibliographyRecord(
+                citation_key="doe2024traceable",
+                title="Traceable Literature Assistants",
+                authors="Jane Doe and John Smith",
+                year=2024,
+                doi="10.1234/traceable",
+                venue="Journal of Research Tools",
+                abstract="A study of local knowledge-base research assistants.",
+                arxiv_id="2401.12345",
+                entry_type="article",
+            )
+        )
+
+        hits = chunks.search("10.1234/traceable")
+
+    assert len(hits) == 1
+    assert hits[0].paper_id == paper.id
+    assert hits[0].title == "Traceable Literature Assistants"
+    assert hits[0].document_id is None
+    assert hits[0].chunk_id is None
+    assert hits[0].page_number is None
+    assert "10.1234/traceable" in hits[0].snippet
+
+
 def test_provider_settings_default_and_roundtrip(tmp_path: Path):
     db_path = tmp_path / "library.sqlite"
     with connect(db_path) as conn:

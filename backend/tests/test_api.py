@@ -701,6 +701,39 @@ def test_local_search_returns_page_snippet_hits(tmp_path: Path, write_pdf):
     assert "contrastive retrieval" in payload["hits"][0]["snippet"]
 
 
+def test_local_search_returns_metadata_only_hits(tmp_path: Path):
+    library_dir = tmp_path / "library"
+    bib_path = tmp_path / "library.bib"
+    bib_path.write_text(
+        """
+        @article{doe2024traceable,
+          title = {Traceable Literature Assistants},
+          author = {Jane Doe and John Smith},
+          year = {2024},
+          doi = {10.1234/traceable},
+          journal = {Journal of Research Tools},
+          abstract = {A study of local knowledge-base research assistants.}
+        }
+        """,
+        encoding="utf-8",
+    )
+    client = TestClient(create_app(library_dir=library_dir))
+    client.post(
+        "/api/imports/bibliography",
+        json={"source_path": str(bib_path), "format": "bibtex"},
+    )
+
+    response = client.get("/api/search/local", params={"q": "10.1234/traceable"})
+
+    assert response.status_code == 200
+    hit = response.json()["hits"][0]
+    assert hit["title"] == "Traceable Literature Assistants"
+    assert hit["document_id"] is None
+    assert hit["chunk_id"] is None
+    assert hit["page_number"] is None
+    assert "10.1234/traceable" in hit["snippet"]
+
+
 def test_reader_context_returns_current_paper_pages(tmp_path: Path, write_pdf):
     source = write_pdf(
         tmp_path / "Reader Paper.pdf",

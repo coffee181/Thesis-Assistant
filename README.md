@@ -15,7 +15,7 @@ This repository currently implements the local research assistant MVP slice:
 - Basic paper listing API.
 - BibTeX/RIS bibliography import and export.
 - External literature discovery with open PDF download/import.
-- Local full-text search over extracted PDF pages.
+- Local search over paper metadata and extracted PDF pages.
 - Managed PDF preview with extracted text reader context.
 - Current-paper assistant Q&A with page citations.
 - Selected-text translation, explanation, and summarization.

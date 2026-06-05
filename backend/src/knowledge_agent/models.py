@@ -145,9 +145,9 @@ class SearchHit:
     title: str
     year: int | None
     doi: str | None
-    document_id: int
-    chunk_id: int
-    page_number: int
+    document_id: int | None
+    chunk_id: int | None
+    page_number: int | None
     snippet: str
 
 

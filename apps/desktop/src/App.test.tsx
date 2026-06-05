@@ -1203,6 +1203,61 @@ describe("App", () => {
     expect(await screen.findByText("The method evaluates contrastive retrieval over local literature.")).toBeInTheDocument();
   });
 
+  it("displays metadata-only local search hits without page links", async () => {
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ status: "ok", service: "knowledge-agent-backend" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => defaultLibraryStatus,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ papers: [] }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => defaultProviderSettings,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => emptyJobsResponse,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          query: "10.1234/traceable",
+          hits: [
+            {
+              paper_id: 12,
+              title: "Traceable Literature Assistants",
+              year: 2024,
+              doi: "10.1234/traceable",
+              document_id: null,
+              chunk_id: null,
+              page_number: null,
+              snippet:
+                "Traceable Literature Assistants. Jane Doe and John Smith. DOI 10.1234/traceable.",
+            },
+          ],
+        }),
+      });
+
+    render(<App />);
+    await userEvent.type(await screen.findByLabelText("Search library"), "10.1234/traceable");
+    await userEvent.click(screen.getByRole("button", { name: "Search" }));
+
+    expect(await screen.findByText("Traceable Literature Assistants")).toBeInTheDocument();
+    expect(await screen.findByText("Metadata match")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", {
+        name: "Open Traceable Literature Assistants page null",
+      }),
+    ).not.toBeInTheDocument();
+  });
+
   it("opens a paper and displays reader context for the assistant", async () => {
     fetchMock
       .mockResolvedValueOnce({

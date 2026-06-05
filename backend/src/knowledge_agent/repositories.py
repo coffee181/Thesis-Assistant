@@ -1068,7 +1068,78 @@ class ChunksRepository:
             """,
             (_fts_phrase(normalized_query), limit),
         ).fetchall()
-        return [SearchHit(**dict(row)) for row in rows]
+        hits = [SearchHit(**dict(row)) for row in rows]
+        if len(hits) >= limit:
+            return hits
+
+        seen_paper_ids = {hit.paper_id for hit in hits}
+        metadata_hits = self._metadata_search_hits(
+            normalized_query,
+            limit=limit - len(hits),
+            excluded_paper_ids=seen_paper_ids,
+        )
+        return [*hits, *metadata_hits]
+
+    def _metadata_search_hits(
+        self,
+        query: str,
+        limit: int,
+        excluded_paper_ids: set[int],
+    ) -> list[SearchHit]:
+        if limit <= 0:
+            return []
+
+        like_pattern = _like_pattern(query)
+        exclusions = ""
+        params: list[object] = [like_pattern] * 7
+        if excluded_paper_ids:
+            placeholders = ", ".join("?" for _ in excluded_paper_ids)
+            exclusions = f"and id not in ({placeholders})"
+            params.extend(sorted(excluded_paper_ids))
+        params.append(limit)
+
+        rows = self._conn.execute(
+            f"""
+            select
+                id as paper_id,
+                title,
+                year,
+                doi,
+                authors,
+                venue,
+                abstract,
+                citation_key,
+                arxiv_id
+            from papers
+            where (
+                lower(coalesce(title, '')) like ? escape '\\'
+                or lower(coalesce(authors, '')) like ? escape '\\'
+                or lower(coalesce(doi, '')) like ? escape '\\'
+                or lower(coalesce(venue, '')) like ? escape '\\'
+                or lower(coalesce(abstract, '')) like ? escape '\\'
+                or lower(coalesce(citation_key, '')) like ? escape '\\'
+                or lower(coalesce(arxiv_id, '')) like ? escape '\\'
+            )
+            {exclusions}
+            order by created_at desc, id desc
+            limit ?
+            """,
+            params,
+        ).fetchall()
+
+        return [
+            SearchHit(
+                paper_id=int(row["paper_id"]),
+                title=str(row["title"]),
+                year=row["year"],
+                doi=row["doi"],
+                document_id=None,
+                chunk_id=None,
+                page_number=None,
+                snippet=_metadata_snippet(row),
+            )
+            for row in rows
+        ]
 
     def relevant_for_paper(
         self,
@@ -1110,6 +1181,29 @@ class ChunksRepository:
 def _fts_phrase(query: str) -> str:
     escaped = query.replace('"', '""')
     return f'"{escaped}"'
+
+
+def _like_pattern(query: str) -> str:
+    escaped = (
+        query.strip()
+        .lower()
+        .replace("\\", "\\\\")
+        .replace("%", "\\%")
+        .replace("_", "\\_")
+    )
+    return f"%{escaped}%"
+
+
+def _metadata_snippet(row: sqlite3.Row) -> str:
+    parts = [
+        str(row["title"]),
+        row["authors"],
+        f"DOI {row['doi']}" if row["doi"] else None,
+        row["venue"],
+        f"arXiv {row['arxiv_id']}" if row["arxiv_id"] else None,
+        row["abstract"],
+    ]
+    return ". ".join(str(part).strip().rstrip(".") for part in parts if part) + "."
 
 
 class SettingsRepository:

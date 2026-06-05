@@ -756,19 +756,30 @@ export default function App() {
             {searchHits.length === 0 ? (
               <p className="empty">No search hits.</p>
             ) : (
-              searchHits.map((hit) => (
-                <button
-                  className="search-hit"
-                  key={hit.chunk_id}
-                  onClick={() => openPaper(paperFromSearchHit(hit))}
-                  type="button"
-                  aria-label={`Open ${hit.title} page ${hit.page_number}`}
-                >
-                  <span className="paper-title">{hit.title}</span>
-                  <span className="page-label">Page {hit.page_number}</span>
-                  <span className="snippet">{hit.snippet}</span>
-                </button>
-              ))
+              searchHits.map((hit) =>
+                hit.page_number === null || hit.chunk_id === null ? (
+                  <article
+                    className="search-hit"
+                    key={`metadata-${hit.paper_id}`}
+                  >
+                    <span className="paper-title">{hit.title}</span>
+                    <span className="page-label">Metadata match</span>
+                    <span className="snippet">{hit.snippet}</span>
+                  </article>
+                ) : (
+                  <button
+                    className="search-hit"
+                    key={hit.chunk_id}
+                    onClick={() => openPaper(paperFromSearchHit(hit))}
+                    type="button"
+                    aria-label={`Open ${hit.title} page ${hit.page_number}`}
+                  >
+                    <span className="paper-title">{hit.title}</span>
+                    <span className="page-label">Page {hit.page_number}</span>
+                    <span className="snippet">{hit.snippet}</span>
+                  </button>
+                ),
+              )
             )}
           </div>
         </section>
