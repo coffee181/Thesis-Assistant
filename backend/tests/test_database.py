@@ -1,12 +1,18 @@
 from pathlib import Path
 
 from knowledge_agent.db import connect, init_db
-from knowledge_agent.models import BibliographyRecord, ChunkInput, ProviderSettings
+from knowledge_agent.models import (
+    BibliographyRecord,
+    ChunkInput,
+    DiscoveryCandidate,
+    ProviderSettings,
+)
 from knowledge_agent.repositories import (
     ChunksRepository,
     DocumentsRepository,
     PapersRepository,
     QnaRepository,
+    SearchResultsRepository,
     SettingsRepository,
 )
 
@@ -33,6 +39,7 @@ def test_init_db_creates_tables(tmp_path: Path):
         "chunks_fts",
         "settings",
         "qna_entries",
+        "search_results",
     }.issubset(table_names)
     assert {
         "authors",
@@ -159,6 +166,104 @@ def test_upsert_metadata_deduplicates_by_citation_key_without_doi(tmp_path: Path
     assert second.title == "Local Search Revised"
     assert second.authors == "Smith and Jones"
     assert second.venue == "Library Systems"
+
+
+def test_search_results_repository_replaces_query_results(tmp_path: Path):
+    db_path = tmp_path / "library.sqlite"
+    with connect(db_path) as conn:
+        init_db(conn)
+        repository = SearchResultsRepository(conn)
+        first = repository.replace_for_query(
+            "local rag",
+            [
+                DiscoveryCandidate(
+                    source="openalex",
+                    external_id="W123",
+                    title="Local RAG",
+                    authors="Jane Doe",
+                    year=2024,
+                    doi="10.123/local",
+                    venue="Journal of Local Research",
+                    abstract="Traceable assistants.",
+                    arxiv_id=None,
+                    pdf_url="https://example.test/local.pdf",
+                    landing_url="https://example.test/local",
+                )
+            ],
+        )
+        second = repository.replace_for_query(
+            "local rag",
+            [
+                DiscoveryCandidate(
+                    source="arxiv",
+                    external_id="2401.12345",
+                    title="ArXiv Local RAG",
+                    authors="Jane Doe and John Smith",
+                    year=2024,
+                    doi=None,
+                    venue="arXiv",
+                    abstract=None,
+                    arxiv_id="2401.12345",
+                    pdf_url="https://arxiv.org/pdf/2401.12345",
+                    landing_url="https://arxiv.org/abs/2401.12345",
+                )
+            ],
+        )
+
+    assert [record.title for record in first] == ["Local RAG"]
+    assert [record.title for record in second] == ["ArXiv Local RAG"]
+    assert second[0].query == "local rag"
+    assert second[0].pdf_url == "https://arxiv.org/pdf/2401.12345"
+
+
+def test_search_results_repository_updates_duplicate_source_record(tmp_path: Path):
+    db_path = tmp_path / "library.sqlite"
+    with connect(db_path) as conn:
+        init_db(conn)
+        repository = SearchResultsRepository(conn)
+        repository.replace_for_query(
+            "first query",
+            [
+                DiscoveryCandidate(
+                    source="openalex",
+                    external_id="W123",
+                    title="Original Title",
+                    authors=None,
+                    year=2024,
+                    doi="10.123/local",
+                    venue=None,
+                    abstract=None,
+                    arxiv_id=None,
+                    pdf_url=None,
+                    landing_url=None,
+                )
+            ],
+        )
+        updated = repository.replace_for_query(
+            "second query",
+            [
+                DiscoveryCandidate(
+                    source="openalex",
+                    external_id="W123",
+                    title="Updated Title",
+                    authors="Jane Doe",
+                    year=2025,
+                    doi="10.123/local",
+                    venue="Updated Venue",
+                    abstract=None,
+                    arxiv_id=None,
+                    pdf_url="https://example.test/updated.pdf",
+                    landing_url="https://example.test/updated",
+                )
+            ],
+        )
+        first_query_results = repository.list_for_query("first query")
+
+    assert len(updated) == 1
+    assert updated[0].title == "Updated Title"
+    assert updated[0].authors == "Jane Doe"
+    assert updated[0].venue == "Updated Venue"
+    assert first_query_results == []
 
 
 def test_chunks_replace_list_and_search(tmp_path: Path):

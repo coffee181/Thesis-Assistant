@@ -86,6 +86,27 @@ def init_db(conn: sqlite3.Connection) -> None:
             provider text not null,
             created_at text not null default current_timestamp
         );
+
+        create table if not exists search_results (
+            id integer primary key autoincrement,
+            query text not null,
+            source text not null,
+            external_id text not null,
+            title text not null,
+            authors text,
+            year integer,
+            doi text,
+            venue text,
+            abstract text,
+            arxiv_id text,
+            pdf_url text,
+            landing_url text,
+            created_at text not null default current_timestamp,
+            unique(source, external_id)
+        );
+
+        create index if not exists idx_search_results_query
+        on search_results(query);
         """
     )
     _ensure_column(

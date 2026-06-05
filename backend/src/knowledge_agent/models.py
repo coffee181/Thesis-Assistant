@@ -30,6 +30,39 @@ class BibliographyRecord:
 
 
 @dataclass(frozen=True)
+class DiscoveryCandidate:
+    source: str
+    external_id: str
+    title: str
+    authors: str | None
+    year: int | None
+    doi: str | None
+    venue: str | None
+    abstract: str | None
+    arxiv_id: str | None
+    pdf_url: str | None
+    landing_url: str | None
+
+
+@dataclass(frozen=True)
+class SearchResultRecord:
+    id: int
+    query: str
+    source: str
+    external_id: str
+    title: str
+    authors: str | None
+    year: int | None
+    doi: str | None
+    venue: str | None
+    abstract: str | None
+    arxiv_id: str | None
+    pdf_url: str | None
+    landing_url: str | None
+    created_at: str
+
+
+@dataclass(frozen=True)
 class Document:
     id: int
     paper_id: int

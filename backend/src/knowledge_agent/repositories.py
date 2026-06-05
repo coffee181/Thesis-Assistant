@@ -7,9 +7,11 @@ from knowledge_agent.models import (
     Chunk,
     ChunkInput,
     Document,
+    DiscoveryCandidate,
     Paper,
     ProviderSettings,
     QnaEntry,
+    SearchResultRecord,
     SearchHit,
 )
 
@@ -223,6 +225,117 @@ class PapersRepository:
             (record.title, record.year, record.year),
         ).fetchone()
         return Paper(**dict(row)) if row is not None else None
+
+
+class SearchResultsRepository:
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def replace_for_query(
+        self,
+        query: str,
+        candidates: list[DiscoveryCandidate],
+    ) -> list[SearchResultRecord]:
+        self._conn.execute("delete from search_results where query = ?", (query,))
+        for candidate in candidates:
+            self._conn.execute(
+                """
+                insert into search_results (
+                    query,
+                    source,
+                    external_id,
+                    title,
+                    authors,
+                    year,
+                    doi,
+                    venue,
+                    abstract,
+                    arxiv_id,
+                    pdf_url,
+                    landing_url
+                )
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                on conflict(source, external_id) do update set
+                    query = excluded.query,
+                    title = excluded.title,
+                    authors = excluded.authors,
+                    year = excluded.year,
+                    doi = excluded.doi,
+                    venue = excluded.venue,
+                    abstract = excluded.abstract,
+                    arxiv_id = excluded.arxiv_id,
+                    pdf_url = excluded.pdf_url,
+                    landing_url = excluded.landing_url
+                """,
+                (
+                    query,
+                    candidate.source,
+                    candidate.external_id,
+                    candidate.title,
+                    candidate.authors,
+                    candidate.year,
+                    _normalize_doi(candidate.doi),
+                    candidate.venue,
+                    candidate.abstract,
+                    candidate.arxiv_id,
+                    candidate.pdf_url,
+                    candidate.landing_url,
+                ),
+            )
+        return self.list_for_query(query)
+
+    def list_for_query(self, query: str) -> list[SearchResultRecord]:
+        rows = self._conn.execute(
+            """
+            select
+                id,
+                query,
+                source,
+                external_id,
+                title,
+                authors,
+                year,
+                doi,
+                venue,
+                abstract,
+                arxiv_id,
+                pdf_url,
+                landing_url,
+                created_at
+            from search_results
+            where query = ?
+            order by id
+            """,
+            (query,),
+        ).fetchall()
+        return [SearchResultRecord(**dict(row)) for row in rows]
+
+    def get(self, result_id: int) -> SearchResultRecord:
+        row = self._conn.execute(
+            """
+            select
+                id,
+                query,
+                source,
+                external_id,
+                title,
+                authors,
+                year,
+                doi,
+                venue,
+                abstract,
+                arxiv_id,
+                pdf_url,
+                landing_url,
+                created_at
+            from search_results
+            where id = ?
+            """,
+            (result_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"search result not found: {result_id}")
+        return SearchResultRecord(**dict(row))
 
 
 class DocumentsRepository:
