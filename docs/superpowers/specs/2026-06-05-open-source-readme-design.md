@@ -4,6 +4,12 @@
 
 Rewrite the repository README so Thesis Assistant looks like a usable open-source desktop application, not a development log.
 
+## Current Status
+
+This README polish is blocked by the desktop UI redesign in `docs/superpowers/specs/2026-06-05-desktop-ui-redesign-design.md`.
+
+Do not generate final README screenshots from the current control-panel UI. The README should be updated only after the redesigned desktop interface has been implemented and visually reviewed.
+
 ## Audience
 
 The README should serve two audiences:

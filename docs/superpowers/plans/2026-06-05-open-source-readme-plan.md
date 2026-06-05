@@ -8,6 +8,8 @@
 
 **Tech Stack:** Markdown, PowerShell, FastAPI/Uvicorn, Vite/React, Microsoft Edge headless screenshot capture.
 
+**Status:** Blocked until the desktop UI redesign in `docs/superpowers/specs/2026-06-05-desktop-ui-redesign-design.md` is implemented and visually reviewed. Do not execute the screenshot tasks against the current control-panel UI.
+
 ---
 
 ### Task 1: Commit README Design Documents
