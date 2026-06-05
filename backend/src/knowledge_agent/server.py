@@ -1,5 +1,6 @@
 from argparse import ArgumentParser, Namespace
 from collections.abc import Sequence
+from typing import Any
 
 import uvicorn
 
@@ -11,10 +12,16 @@ def parse_args(argv: Sequence[str] | None = None) -> Namespace:
     return parser.parse_args(argv)
 
 
+def create_app() -> Any:
+    from knowledge_agent.main import app
+
+    return app
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv)
     uvicorn.run(
-        "knowledge_agent.main:app",
+        create_app(),
         host=args.host,
         port=args.port,
         log_level="info",
