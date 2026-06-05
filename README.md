@@ -105,6 +105,28 @@ $env:KA_BACKEND_ARGS='--host 127.0.0.1 --port 8765'
 .\scripts\dev-desktop.ps1
 ```
 
+## Windows Release Build
+
+Build a private Windows installer from PowerShell:
+
+```powershell
+.\scripts\build-release.ps1
+```
+
+Prerequisites are Python 3.13, Node.js/npm, Rust/Cargo, and the Windows Tauri bundling tools that the Tauri CLI downloads or uses locally. The script creates or reuses `.venv`, installs `backend[dev]` plus PyInstaller, builds the backend as a bundled executable, smoke-tests `/health`, then runs the Tauri NSIS installer build.
+
+The installer is written under:
+
+```text
+apps\desktop\src-tauri\target\release\bundle\nsis
+```
+
+The script prints each installer path and its SHA-256 checksum. The generated backend binary, installer, build output, local PDFs, local libraries, and model API keys must not be committed.
+
+For private sharing, send the NSIS `.exe` installer and the printed SHA-256 checksum to a trusted recipient. The recipient does not need this source checkout, Python, Node.js, Rust, or a virtual environment. They install the app, configure their own model provider settings, and select their own local library path.
+
+The installer is currently unsigned, so Windows SmartScreen or antivirus software may show an "unknown publisher" warning. That is expected for private testing. Public distribution should add code signing and a short release note before broad sharing.
+
 ## Tests
 
 Backend:
