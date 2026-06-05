@@ -173,6 +173,36 @@ describe("App", () => {
     expect(await screen.findByText("Provider: none")).toBeInTheDocument();
   });
 
+  it("waits for a backend that is still starting", async () => {
+    fetchMock
+      .mockRejectedValueOnce(new Error("connection refused"))
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ status: "ok", service: "knowledge-agent-backend" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => defaultLibraryStatus,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ papers: [] }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => defaultProviderSettings,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => emptyJobsResponse,
+      });
+
+    render(<App />);
+
+    expect(await screen.findByText("Backend: ok")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(6);
+  });
+
   it("loads library status and displays the active library path", async () => {
     fetchMock.mockImplementation(async (url: string) => {
       if (url.endsWith("/health")) {

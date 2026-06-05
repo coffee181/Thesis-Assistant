@@ -22,13 +22,13 @@ This repository currently implements the local research assistant MVP slice:
 - Notes and highlights for selected passages.
 - OpenAI-compatible and Ollama provider settings, including optional provider proxy URL.
 - React library shell.
-- Minimal Tauri desktop wrapper.
+- Tauri desktop shell that starts the local Python backend during desktop runs.
 
 The backend defaults to `%USERPROFILE%\KnowledgeAgentLibrary`, or `KA_LIBRARY_DIR` when set. In the desktop app, paste a managed library path into `Library location` to switch the active local library for the running backend.
 
 ## MVP Workflow
 
-1. Start the backend and desktop app from the Development commands below.
+1. Start the desktop app from the Development commands below. The Tauri shell starts the local backend.
 2. Select a managed library path in `Library location`.
 3. Import individual PDFs with `Import PDF`, or recursively import a folder with `Import folder`.
 4. Import or export BibTeX/RIS metadata from the bibliography controls.
@@ -81,19 +81,27 @@ Prerequisites:
 - Node.js 24 and npm
 - Rust and Cargo
 
-Start the backend in one PowerShell window:
-
-```powershell
-.\scripts\dev-backend.ps1
-```
-
-Start the desktop app in another PowerShell window:
+Start the desktop app from PowerShell:
 
 ```powershell
 .\scripts\dev-desktop.ps1
 ```
 
-The backend listens on `http://127.0.0.1:8765`.
+The script prepares the Python virtual environment, installs `backend[dev]`, installs desktop dependencies when needed, and runs Tauri. Tauri starts the backend on `http://127.0.0.1:8765` unless another process is already listening there.
+
+For backend-only development, run:
+
+```powershell
+.\scripts\dev-backend.ps1
+```
+
+For sidecar or packaged-backend experiments, override the command used by the Tauri shell:
+
+```powershell
+$env:KA_BACKEND_PROGRAM='F:\bundle\knowledge-agent-backend.exe'
+$env:KA_BACKEND_ARGS='--host 127.0.0.1 --port 8765'
+.\scripts\dev-desktop.ps1
+```
 
 ## Tests
 

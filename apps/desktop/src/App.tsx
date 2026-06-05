@@ -9,7 +9,7 @@ import {
   createNote,
   downloadOpenPdf,
   exportBibliography,
-  getHealth,
+  getHealthWithRetry,
   getLibrary,
   getProviderSettings,
   getReaderContext,
@@ -103,7 +103,7 @@ export default function App() {
 
     async function load() {
       try {
-        const health = await getHealth();
+        const health = await getHealthWithRetry();
         if (!active) return;
         setBackendStatus(health.status);
         const library = await getLibrary();

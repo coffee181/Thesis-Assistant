@@ -236,6 +236,26 @@ export async function getHealth(): Promise<HealthResponse> {
   return response.json();
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+export async function getHealthWithRetry(
+  attempts = 20,
+  intervalMs = 250,
+): Promise<HealthResponse> {
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return await getHealth();
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts - 1) await delay(intervalMs);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("Backend health check failed");
+}
+
 function normalizePaper(paper: Paper): Paper {
   return {
     ...paper,
