@@ -6,6 +6,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 pub const BACKEND_ADDR: &str = "127.0.0.1:8765";
+pub const BUNDLED_BACKEND_EXE: &str = "knowledge-agent-backend-x86_64-pc-windows-msvc.exe";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BackendLaunch {
@@ -19,7 +20,7 @@ pub struct BackendProcess {
 }
 
 impl BackendProcess {
-    pub fn start() -> Self {
+    pub fn start(resource_dir: Option<PathBuf>) -> Self {
         if is_backend_port_open(BACKEND_ADDR) {
             return Self::empty();
         }
@@ -32,7 +33,8 @@ impl BackendProcess {
             }
         };
         let env = std::env::vars().collect::<HashMap<_, _>>();
-        let Some(launch) = resolve_backend_launch_from_env(&current_dir, &env) else {
+        let Some(launch) = resolve_backend_launch(&current_dir, resource_dir.as_deref(), &env)
+        else {
             eprintln!("could not resolve backend launch command");
             return Self::empty();
         };
@@ -90,6 +92,14 @@ pub fn resolve_backend_launch_from_env(
     current_dir: &Path,
     env: &HashMap<String, String>,
 ) -> Option<BackendLaunch> {
+    resolve_backend_launch(current_dir, None, env)
+}
+
+pub fn resolve_backend_launch(
+    current_dir: &Path,
+    resource_dir: Option<&Path>,
+    env: &HashMap<String, String>,
+) -> Option<BackendLaunch> {
     if let Some(program) = env.get("KA_BACKEND_PROGRAM").filter(|value| !value.trim().is_empty()) {
         return Some(BackendLaunch {
             program: PathBuf::from(program),
@@ -101,23 +111,45 @@ pub fn resolve_backend_launch_from_env(
         });
     }
 
+    if let Some(resource_dir) = resource_dir {
+        let bundled_backend = resource_dir.join(BUNDLED_BACKEND_EXE);
+        if bundled_backend.is_file() {
+            return Some(BackendLaunch {
+                program: bundled_backend,
+                args: backend_server_args(),
+                cwd: resource_dir.to_path_buf(),
+            });
+        }
+    }
+
     let repo_root = find_repo_root(current_dir)?;
     Some(BackendLaunch {
         program: repo_root
             .join(".venv")
             .join("Scripts")
             .join("python.exe"),
-        args: vec![
-            "-m".to_string(),
-            "uvicorn".to_string(),
-            "knowledge_agent.main:app".to_string(),
-            "--host".to_string(),
-            "127.0.0.1".to_string(),
-            "--port".to_string(),
-            "8765".to_string(),
-        ],
+        args: development_backend_args(),
         cwd: repo_root,
     })
+}
+
+fn backend_server_args() -> Vec<String> {
+    vec![
+        "--host".to_string(),
+        "127.0.0.1".to_string(),
+        "--port".to_string(),
+        "8765".to_string(),
+    ]
+}
+
+fn development_backend_args() -> Vec<String> {
+    let mut args = vec![
+        "-m".to_string(),
+        "uvicorn".to_string(),
+        "knowledge_agent.main:app".to_string(),
+    ];
+    args.extend(backend_server_args());
+    args
 }
 
 fn split_args(value: &str) -> Vec<String> {
@@ -200,6 +232,25 @@ mod tests {
         assert_eq!(launch.program, PathBuf::from("F:\\bundle\\backend.exe"));
         assert_eq!(launch.args, vec!["--host", "127.0.0.1", "--port", "8765"]);
         assert_eq!(launch.cwd, PathBuf::from("F:\\nowhere"));
+    }
+
+    #[test]
+    fn resolves_bundled_backend_before_development_fallback() {
+        let root = temp_repo();
+        let resource_dir = root.join("resources");
+        fs::create_dir_all(&resource_dir).unwrap();
+        let bundled = resource_dir.join(BUNDLED_BACKEND_EXE);
+        fs::write(&bundled, "").unwrap();
+
+        let cwd = root.join("apps/desktop/src-tauri");
+        let launch =
+            resolve_backend_launch(&cwd, Some(&resource_dir), &HashMap::new()).unwrap();
+
+        assert_eq!(launch.program, bundled);
+        assert_eq!(launch.args, vec!["--host", "127.0.0.1", "--port", "8765"]);
+        assert_eq!(launch.cwd, resource_dir);
+
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
