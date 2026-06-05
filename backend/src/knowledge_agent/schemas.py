@@ -19,6 +19,8 @@ class DocumentResponse(BaseModel):
     library_path: str
     file_hash: str
     page_count: int | None
+    parse_status: str
+    parse_error: str | None
     created_at: str
 
 
@@ -34,3 +36,32 @@ class ImportPdfResponse(BaseModel):
 
 class PapersResponse(BaseModel):
     papers: list[PaperResponse]
+
+
+class SearchHitResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    paper_id: int
+    title: str
+    year: int | None
+    doi: str | None
+    document_id: int
+    chunk_id: int
+    page_number: int
+    snippet: str
+
+
+class LocalSearchResponse(BaseModel):
+    query: str
+    hits: list[SearchHitResponse]
+
+
+class ReaderPageResponse(BaseModel):
+    page_number: int
+    text: str
+
+
+class ReaderContextResponse(BaseModel):
+    paper: PaperResponse
+    document: DocumentResponse
+    pages: list[ReaderPageResponse]
