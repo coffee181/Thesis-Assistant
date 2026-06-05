@@ -23,8 +23,14 @@ def init_db(conn: sqlite3.Connection) -> None:
         create table if not exists papers (
             id integer primary key autoincrement,
             title text not null,
+            authors text,
             year integer,
             doi text,
+            venue text,
+            abstract text,
+            citation_key text,
+            arxiv_id text,
+            entry_type text,
             created_at text not null default current_timestamp
         );
 
@@ -93,6 +99,27 @@ def init_db(conn: sqlite3.Connection) -> None:
         table_name="documents",
         column_name="parse_error",
         definition="parse_error text",
+    )
+    for column_name, definition in [
+        ("authors", "authors text"),
+        ("venue", "venue text"),
+        ("abstract", "abstract text"),
+        ("citation_key", "citation_key text"),
+        ("arxiv_id", "arxiv_id text"),
+        ("entry_type", "entry_type text"),
+    ]:
+        _ensure_column(
+            conn,
+            table_name="papers",
+            column_name=column_name,
+            definition=definition,
+        )
+    conn.execute(
+        """
+        create unique index if not exists idx_papers_citation_key_unique
+        on papers(citation_key)
+        where citation_key is not null
+        """
     )
 
 

@@ -5,9 +5,28 @@ from dataclasses import dataclass
 class Paper:
     id: int
     title: str
+    authors: str | None
     year: int | None
     doi: str | None
+    venue: str | None
+    abstract: str | None
+    citation_key: str | None
+    arxiv_id: str | None
+    entry_type: str | None
     created_at: str
+
+
+@dataclass(frozen=True)
+class BibliographyRecord:
+    citation_key: str | None
+    title: str
+    authors: str | None
+    year: int | None
+    doi: str | None
+    venue: str | None
+    abstract: str | None
+    arxiv_id: str | None
+    entry_type: str | None
 
 
 @dataclass(frozen=True)

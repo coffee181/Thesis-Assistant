@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from knowledge_agent.db import connect, init_db
-from knowledge_agent.models import ChunkInput, ProviderSettings
+from knowledge_agent.models import BibliographyRecord, ChunkInput, ProviderSettings
 from knowledge_agent.repositories import (
     ChunksRepository,
     DocumentsRepository,
@@ -21,6 +21,10 @@ def test_init_db_creates_tables(tmp_path: Path):
                 "select name from sqlite_master where type = 'table'"
             ).fetchall()
         }
+        paper_columns = {
+            row["name"]
+            for row in conn.execute("pragma table_info(papers)").fetchall()
+        }
 
     assert {
         "papers",
@@ -30,6 +34,14 @@ def test_init_db_creates_tables(tmp_path: Path):
         "settings",
         "qna_entries",
     }.issubset(table_names)
+    assert {
+        "authors",
+        "venue",
+        "abstract",
+        "citation_key",
+        "arxiv_id",
+        "entry_type",
+    }.issubset(paper_columns)
 
 
 def test_paper_and_document_roundtrip(tmp_path: Path):
@@ -39,7 +51,17 @@ def test_paper_and_document_roundtrip(tmp_path: Path):
         papers = PapersRepository(conn)
         documents = DocumentsRepository(conn)
 
-        paper = papers.create(title="A Useful Paper", year=2024, doi="10.123/example")
+        paper = papers.create(
+            title="A Useful Paper",
+            year=2024,
+            doi="10.123/example",
+            authors="Ada Lovelace and Grace Hopper",
+            venue="Journal of Useful Systems",
+            abstract="A concise abstract.",
+            citation_key="lovelace2024useful",
+            arxiv_id="2401.12345",
+            entry_type="article",
+        )
         document = documents.create(
             paper_id=paper.id,
             library_path="papers/2024/a-useful-paper/paper.pdf",
@@ -48,8 +70,95 @@ def test_paper_and_document_roundtrip(tmp_path: Path):
         )
 
         assert papers.list_all()[0].title == "A Useful Paper"
+        assert papers.list_all()[0].authors == "Ada Lovelace and Grace Hopper"
+        assert papers.list_all()[0].venue == "Journal of Useful Systems"
+        assert papers.list_all()[0].abstract == "A concise abstract."
+        assert papers.list_all()[0].citation_key == "lovelace2024useful"
+        assert papers.list_all()[0].arxiv_id == "2401.12345"
+        assert papers.list_all()[0].entry_type == "article"
         assert documents.find_by_hash("abc123").id == document.id
         assert document.parse_status == "pending"
+
+
+def test_upsert_metadata_updates_existing_doi(tmp_path: Path):
+    db_path = tmp_path / "library.sqlite"
+    with connect(db_path) as conn:
+        init_db(conn)
+        papers = PapersRepository(conn)
+        first = papers.upsert_metadata(
+            BibliographyRecord(
+                citation_key="first2024",
+                title="Original Title",
+                authors="First Author",
+                year=2024,
+                doi="10.123/example",
+                venue="Original Venue",
+                abstract=None,
+                arxiv_id=None,
+                entry_type="article",
+            )
+        )
+        second = papers.upsert_metadata(
+            BibliographyRecord(
+                citation_key="second2024",
+                title="Updated Title",
+                authors="Second Author",
+                year=2025,
+                doi="10.123/example",
+                venue="Updated Venue",
+                abstract="Updated abstract",
+                arxiv_id="2501.00001",
+                entry_type="inproceedings",
+            )
+        )
+        all_papers = papers.list_all()
+
+    assert first.id == second.id
+    assert len(all_papers) == 1
+    assert all_papers[0].title == "Updated Title"
+    assert all_papers[0].authors == "Second Author"
+    assert all_papers[0].year == 2025
+    assert all_papers[0].venue == "Updated Venue"
+    assert all_papers[0].abstract == "Updated abstract"
+    assert all_papers[0].arxiv_id == "2501.00001"
+
+
+def test_upsert_metadata_deduplicates_by_citation_key_without_doi(tmp_path: Path):
+    db_path = tmp_path / "library.sqlite"
+    with connect(db_path) as conn:
+        init_db(conn)
+        papers = PapersRepository(conn)
+        first = papers.upsert_metadata(
+            BibliographyRecord(
+                citation_key="smith2024local",
+                title="Local Search",
+                authors="Smith",
+                year=2024,
+                doi=None,
+                venue=None,
+                abstract=None,
+                arxiv_id=None,
+                entry_type="article",
+            )
+        )
+        second = papers.upsert_metadata(
+            BibliographyRecord(
+                citation_key="smith2024local",
+                title="Local Search Revised",
+                authors="Smith and Jones",
+                year=2024,
+                doi=None,
+                venue="Library Systems",
+                abstract=None,
+                arxiv_id=None,
+                entry_type="article",
+            )
+        )
+
+    assert first.id == second.id
+    assert second.title == "Local Search Revised"
+    assert second.authors == "Smith and Jones"
+    assert second.venue == "Library Systems"
 
 
 def test_chunks_replace_list_and_search(tmp_path: Path):

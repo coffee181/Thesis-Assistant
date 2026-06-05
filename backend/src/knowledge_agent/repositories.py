@@ -3,6 +3,7 @@ import re
 import sqlite3
 
 from knowledge_agent.models import (
+    BibliographyRecord,
     Chunk,
     ChunkInput,
     Document,
@@ -20,16 +21,65 @@ class PapersRepository:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
 
-    def create(self, title: str, year: int | None, doi: str | None) -> Paper:
+    def create(
+        self,
+        title: str,
+        year: int | None,
+        doi: str | None,
+        authors: str | None = None,
+        venue: str | None = None,
+        abstract: str | None = None,
+        citation_key: str | None = None,
+        arxiv_id: str | None = None,
+        entry_type: str | None = None,
+    ) -> Paper:
         cursor = self._conn.execute(
-            "insert into papers (title, year, doi) values (?, ?, ?)",
-            (title, year, doi),
+            """
+            insert into papers (
+                title,
+                authors,
+                year,
+                doi,
+                venue,
+                abstract,
+                citation_key,
+                arxiv_id,
+                entry_type
+            )
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                title,
+                authors,
+                year,
+                _normalize_doi(doi),
+                venue,
+                abstract,
+                citation_key,
+                arxiv_id,
+                entry_type,
+            ),
         )
         return self.get(cursor.lastrowid)
 
     def get(self, paper_id: int) -> Paper:
         row = self._conn.execute(
-            "select id, title, year, doi, created_at from papers where id = ?",
+            """
+            select
+                id,
+                title,
+                authors,
+                year,
+                doi,
+                venue,
+                abstract,
+                citation_key,
+                arxiv_id,
+                entry_type,
+                created_at
+            from papers
+            where id = ?
+            """,
             (paper_id,),
         ).fetchone()
         if row is None:
@@ -38,9 +88,141 @@ class PapersRepository:
 
     def list_all(self) -> list[Paper]:
         rows = self._conn.execute(
-            "select id, title, year, doi, created_at from papers order by created_at desc, id desc"
+            """
+            select
+                id,
+                title,
+                authors,
+                year,
+                doi,
+                venue,
+                abstract,
+                citation_key,
+                arxiv_id,
+                entry_type,
+                created_at
+            from papers
+            order by created_at desc, id desc
+            """
         ).fetchall()
         return [Paper(**dict(row)) for row in rows]
+
+    def upsert_metadata(self, record: BibliographyRecord) -> Paper:
+        existing = self._find_existing_metadata_record(record)
+        if existing is None:
+            return self.create(
+                title=record.title,
+                authors=record.authors,
+                year=record.year,
+                doi=record.doi,
+                venue=record.venue,
+                abstract=record.abstract,
+                citation_key=record.citation_key,
+                arxiv_id=record.arxiv_id,
+                entry_type=record.entry_type,
+            )
+
+        self._conn.execute(
+            """
+            update papers
+            set
+                title = ?,
+                authors = ?,
+                year = ?,
+                doi = ?,
+                venue = ?,
+                abstract = ?,
+                citation_key = ?,
+                arxiv_id = ?,
+                entry_type = ?
+            where id = ?
+            """,
+            (
+                record.title,
+                record.authors,
+                record.year,
+                _normalize_doi(record.doi),
+                record.venue,
+                record.abstract,
+                record.citation_key,
+                record.arxiv_id,
+                record.entry_type,
+                existing.id,
+            ),
+        )
+        return self.get(existing.id)
+
+    def _find_existing_metadata_record(
+        self,
+        record: BibliographyRecord,
+    ) -> Paper | None:
+        normalized_doi = _normalize_doi(record.doi)
+        if normalized_doi:
+            row = self._conn.execute(
+                """
+                select
+                    id,
+                    title,
+                    authors,
+                    year,
+                    doi,
+                    venue,
+                    abstract,
+                    citation_key,
+                    arxiv_id,
+                    entry_type,
+                    created_at
+                from papers
+                where doi = ?
+                """,
+                (normalized_doi,),
+            ).fetchone()
+            if row is not None:
+                return Paper(**dict(row))
+
+        if record.citation_key:
+            row = self._conn.execute(
+                """
+                select
+                    id,
+                    title,
+                    authors,
+                    year,
+                    doi,
+                    venue,
+                    abstract,
+                    citation_key,
+                    arxiv_id,
+                    entry_type,
+                    created_at
+                from papers
+                where citation_key = ?
+                """,
+                (record.citation_key,),
+            ).fetchone()
+            if row is not None:
+                return Paper(**dict(row))
+
+        row = self._conn.execute(
+            """
+            select
+                id,
+                title,
+                authors,
+                year,
+                doi,
+                venue,
+                abstract,
+                citation_key,
+                arxiv_id,
+                entry_type,
+                created_at
+            from papers
+            where lower(title) = lower(?) and ((year is null and ? is null) or year = ?)
+            """,
+            (record.title, record.year, record.year),
+        ).fetchone()
+        return Paper(**dict(row)) if row is not None else None
 
 
 class DocumentsRepository:
@@ -413,3 +595,10 @@ def _tokenize(value: str) -> set[str]:
 
 def _overlap_score(query_terms: set[str], chunk_terms: set[str]) -> int:
     return len(query_terms & chunk_terms)
+
+
+def _normalize_doi(doi: str | None) -> str | None:
+    if doi is None:
+        return None
+    normalized = doi.strip().lower()
+    return normalized or None
