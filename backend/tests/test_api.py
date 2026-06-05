@@ -1,7 +1,10 @@
+from contextlib import contextmanager
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from knowledge_agent import main as main_module
+from knowledge_agent.db import connect as real_connect
 from knowledge_agent.main import create_app
 from knowledge_agent.models import DiscoveryCandidate, ProviderSettings
 from knowledge_agent.providers import ProviderMessage
@@ -90,6 +93,53 @@ def test_select_library_switches_active_database(tmp_path: Path):
     assert response.json()["library_dir"] == str(second_library)
     assert (second_library / "database.sqlite").exists()
     assert list_response.json()["papers"] == []
+
+
+def test_select_library_reports_existing_file_path(tmp_path: Path):
+    library_dir = tmp_path / "library"
+    file_path = tmp_path / "not-a-library-directory"
+    file_path.write_text("not a directory", encoding="utf-8")
+    client = TestClient(
+        create_app(library_dir=library_dir),
+        raise_server_exceptions=False,
+    )
+
+    response = client.put("/api/library", json={"library_dir": str(file_path)})
+    library_response = client.get("/api/library")
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "could not select library"
+    assert library_response.json()["library_dir"] == str(library_dir)
+
+
+def test_import_pdf_uses_one_library_snapshot_during_concurrent_switch(
+    tmp_path: Path,
+    monkeypatch,
+):
+    first_library = tmp_path / "first-library"
+    second_library = tmp_path / "second-library"
+    source = tmp_path / "Concurrent Paper.pdf"
+    source.write_bytes(b"%PDF-1.4 concurrent")
+    client = TestClient(create_app(library_dir=first_library))
+    switched = False
+
+    @contextmanager
+    def switching_connect(db_path: Path):
+        nonlocal switched
+        with real_connect(db_path) as conn:
+            if db_path == first_library / "database.sqlite" and not switched:
+                switched = True
+                client.put("/api/library", json={"library_dir": str(second_library)})
+            yield conn
+
+    monkeypatch.setattr(main_module, "connect", switching_connect)
+
+    response = client.post("/api/imports/pdf", json={"source_path": str(source)})
+
+    assert response.status_code == 201
+    document_path = Path(response.json()["document"]["library_path"])
+    assert (first_library / document_path).exists()
+    assert not (second_library / document_path).exists()
 
 
 def test_import_folder_endpoint_imports_recursive_pdfs(tmp_path: Path):

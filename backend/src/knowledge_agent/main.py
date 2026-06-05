@@ -1,4 +1,5 @@
 from pathlib import Path
+import sqlite3
 from typing import Callable
 
 from fastapi import FastAPI, HTTPException, Query, status
@@ -92,9 +93,15 @@ def create_app(
     def select_library(request: SelectLibraryRequest) -> LibraryResponse:
         nonlocal config
         selected = load_config(Path(request.library_dir))
-        selected.library_dir.mkdir(parents=True, exist_ok=True)
-        with connect(selected.database_path) as conn:
-            init_db(conn)
+        try:
+            selected.library_dir.mkdir(parents=True, exist_ok=True)
+            with connect(selected.database_path) as conn:
+                init_db(conn)
+        except (OSError, sqlite3.Error) as exc:
+            raise HTTPException(
+                status_code=400,
+                detail="could not select library",
+            ) from exc
         config = selected
         return _library_response(config)
 
@@ -318,12 +325,13 @@ def create_app(
         status_code=status.HTTP_201_CREATED,
     )
     def import_pdf_endpoint(request: ImportPdfRequest) -> ImportPdfResponse:
+        active_config = config
         source_path = Path(request.source_path)
         if not source_path.exists():
             raise HTTPException(status_code=404, detail="source PDF not found")
         try:
-            with connect(config.database_path) as conn:
-                result = import_pdf(conn, config.library_dir, source_path)
+            with connect(active_config.database_path) as conn:
+                result = import_pdf(conn, active_config.library_dir, source_path)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return ImportPdfResponse(
@@ -338,12 +346,13 @@ def create_app(
         status_code=status.HTTP_201_CREATED,
     )
     def import_folder_endpoint(request: ImportFolderRequest) -> ImportFolderResponse:
+        active_config = config
         source_dir = Path(request.source_dir)
         if not source_dir.exists():
             raise HTTPException(status_code=404, detail="source folder not found")
         try:
-            with connect(config.database_path) as conn:
-                result = import_pdf_folder(conn, config.library_dir, source_dir)
+            with connect(active_config.database_path) as conn:
+                result = import_pdf_folder(conn, active_config.library_dir, source_dir)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return ImportFolderResponse(
@@ -432,7 +441,8 @@ def create_app(
     def download_open_pdf(
         request: OpenPdfDownloadRequest,
     ) -> OpenPdfDownloadResponse:
-        with connect(config.database_path) as conn:
+        active_config = config
+        with connect(active_config.database_path) as conn:
             try:
                 result = SearchResultsRepository(conn).get(request.search_result_id)
             except KeyError as exc:
@@ -447,7 +457,7 @@ def create_app(
                 detail="search result has no open PDF URL",
             )
 
-        pending_path = _pending_download_path(config.library_dir, result)
+        pending_path = _pending_download_path(active_config.library_dir, result)
         pending_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             resolved_pdf_downloader(result.pdf_url, pending_path)
@@ -466,8 +476,9 @@ def create_app(
     def import_pending_download(
         request: ImportPendingDownloadRequest,
     ) -> ImportPdfResponse:
+        active_config = config
         pending_path = Path(request.pending_path).resolve()
-        pending_root = (config.library_dir / "downloads" / "pending").resolve()
+        pending_root = (active_config.library_dir / "downloads" / "pending").resolve()
         if not pending_path.exists():
             raise HTTPException(status_code=404, detail="pending PDF not found")
         if pending_path != pending_root and pending_root not in pending_path.parents:
@@ -477,13 +488,13 @@ def create_app(
             )
 
         try:
-            with connect(config.database_path) as conn:
+            with connect(active_config.database_path) as conn:
                 search_result = SearchResultsRepository(conn).get(
                     request.search_result_id
                 )
                 result = import_pdf(
                     conn=conn,
-                    library_root=config.library_dir,
+                    library_root=active_config.library_dir,
                     source_path=pending_path,
                     metadata=_metadata_from_search_result(search_result),
                 )
