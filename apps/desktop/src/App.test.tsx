@@ -238,6 +238,108 @@ describe("App", () => {
     expect(await screen.findByText("Switched Paper")).toBeInTheDocument();
   });
 
+  it("clears paper-specific state when selecting a new library", async () => {
+    const selectedLibrary = {
+      library_dir: "D:\\ResearchLibrary",
+      database_path: "D:\\ResearchLibrary\\database.sqlite",
+      paper_count: 0,
+    };
+    let paperLoads = 0;
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/health")) {
+        return jsonResponse({ status: "ok", service: "knowledge-agent-backend" });
+      }
+      if (url.endsWith("/api/library") && init?.method === "PUT") {
+        return jsonResponse(selectedLibrary);
+      }
+      if (url.endsWith("/api/library")) {
+        return jsonResponse(defaultLibraryStatus);
+      }
+      if (url.endsWith("/api/papers")) {
+        paperLoads += 1;
+        return jsonResponse({ papers: paperLoads === 1 ? [readerPaper] : [] });
+      }
+      if (url.endsWith("/api/settings/provider")) {
+        return jsonResponse(configuredProviderSettings);
+      }
+      if (url.endsWith("/api/papers/1/reader-context")) {
+        return jsonResponse(readerContextPayload);
+      }
+      if (url.endsWith("/api/papers/1/notes")) {
+        return jsonResponse({
+          notes: [
+            {
+              id: 41,
+              paper_id: 1,
+              body: "Old library note",
+              page_number: 2,
+              source_span: "page:2:selection",
+              selected_text: "old selected note text",
+              note_type: "selection",
+              qna_id: null,
+              created_at: "now",
+              updated_at: "now",
+            },
+          ],
+        });
+      }
+      if (url.endsWith("/api/papers/1/highlights")) {
+        return jsonResponse({
+          highlights: [
+            {
+              id: 51,
+              paper_id: 1,
+              page_number: 2,
+              source_span: "page:2:selection",
+              selected_text: "Old highlight text",
+              color: "yellow",
+              note_id: null,
+              created_at: "now",
+            },
+          ],
+        });
+      }
+      if (url.endsWith("/api/papers/1/assistant/selection")) {
+        return jsonResponse({
+          answer: "Old selected answer",
+          mode: "selection",
+          provider: "openai_compatible",
+          qna_id: 61,
+          citations: [
+            {
+              chunk_id: null,
+              paper_id: 1,
+              title: "Reader Paper",
+              page_number: 2,
+              snippet: "retrieval augmented generation",
+              source_span: "page:2:selection",
+            },
+          ],
+        });
+      }
+      throw new Error(`Unhandled request: ${url}`);
+    });
+
+    render(<App />);
+    await userEvent.click(await screen.findByRole("button", { name: "Open Reader Paper" }));
+    expect(await screen.findByText("Old library note")).toBeInTheDocument();
+    expect(await screen.findByText("Old highlight text")).toBeInTheDocument();
+    selectReaderText("retrieval augmented generation");
+    await userEvent.click(await screen.findByRole("button", { name: "Translate selection" }));
+    expect(await screen.findByText("Old selected answer")).toBeInTheDocument();
+
+    await userEvent.clear(screen.getByLabelText("Library location"));
+    await userEvent.type(screen.getByLabelText("Library location"), "D:\\ResearchLibrary");
+    await userEvent.click(screen.getByRole("button", { name: "Select library" }));
+
+    expect(await screen.findByText("Library selected")).toBeInTheDocument();
+    expect(screen.queryByText("Selected text")).not.toBeInTheDocument();
+    expect(screen.queryByText("Old selected answer")).not.toBeInTheDocument();
+    expect(screen.queryByText("Old library note")).not.toBeInTheDocument();
+    expect(screen.queryByText("Old highlight text")).not.toBeInTheDocument();
+    expect(screen.getByText("Context: none")).toBeInTheDocument();
+  });
+
   it("imports a PDF folder and refreshes papers with import counts", async () => {
     let paperLoads = 0;
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {

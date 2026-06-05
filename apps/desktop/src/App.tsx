@@ -118,7 +118,13 @@ export default function App() {
       const library = await selectLibrary(selectedPath);
       setLibraryStatus(library);
       setLibraryPath(library.library_dir);
+      setPapers([]);
       setReaderContext(null);
+      clearSelection();
+      setNotes([]);
+      setHighlights([]);
+      setAssistantAnswer(null);
+      setPendingDownloads({});
       setSearchHits([]);
       setExternalResults([]);
       setMessage("Library selected");
