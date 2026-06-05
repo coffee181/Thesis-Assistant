@@ -1,6 +1,19 @@
+import json
+import re
 import sqlite3
 
-from knowledge_agent.models import Chunk, ChunkInput, Document, Paper, SearchHit
+from knowledge_agent.models import (
+    Chunk,
+    ChunkInput,
+    Document,
+    Paper,
+    ProviderSettings,
+    QnaEntry,
+    SearchHit,
+)
+
+
+PROVIDER_SETTINGS_KEY = "provider_settings"
 
 
 class PapersRepository:
@@ -237,6 +250,29 @@ class ChunksRepository:
         ).fetchall()
         return [SearchHit(**dict(row)) for row in rows]
 
+    def relevant_for_paper(
+        self,
+        paper_id: int,
+        query: str,
+        limit: int = 4,
+    ) -> list[Chunk]:
+        chunks = self.list_for_paper(paper_id)
+        if not chunks:
+            return []
+
+        query_terms = _tokenize(query)
+        if not query_terms:
+            return chunks[:limit]
+
+        scored_chunks = [
+            (_overlap_score(query_terms, _tokenize(chunk.text)), index, chunk)
+            for index, chunk in enumerate(chunks)
+        ]
+        scored_chunks.sort(key=lambda item: (-item[0], item[1]))
+        if scored_chunks[0][0] == 0:
+            return chunks[:limit]
+        return [chunk for _, _, chunk in scored_chunks[:limit]]
+
     def _paper_title(self, paper_id: int) -> str:
         row = self._conn.execute(
             "select title from papers where id = ?",
@@ -250,3 +286,126 @@ class ChunksRepository:
 def _fts_phrase(query: str) -> str:
     escaped = query.replace('"', '""')
     return f'"{escaped}"'
+
+
+class SettingsRepository:
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def get_provider_settings(self) -> ProviderSettings:
+        row = self._conn.execute(
+            "select value from settings where key = ?",
+            (PROVIDER_SETTINGS_KEY,),
+        ).fetchone()
+        if row is None:
+            return ProviderSettings()
+        payload = json.loads(str(row["value"]))
+        return ProviderSettings(
+            provider=payload.get("provider", "none"),
+            base_url=payload.get("base_url"),
+            model=payload.get("model"),
+            api_key=payload.get("api_key"),
+            outbound_context_policy=payload.get(
+                "outbound_context_policy",
+                "snippets_only",
+            ),
+        )
+
+    def save_provider_settings(self, settings: ProviderSettings) -> ProviderSettings:
+        payload = json.dumps(
+            {
+                "provider": settings.provider,
+                "base_url": settings.base_url,
+                "model": settings.model,
+                "api_key": settings.api_key,
+                "outbound_context_policy": settings.outbound_context_policy,
+            },
+            ensure_ascii=True,
+        )
+        self._conn.execute(
+            """
+            insert into settings (key, value, updated_at)
+            values (?, ?, current_timestamp)
+            on conflict(key) do update set
+                value = excluded.value,
+                updated_at = current_timestamp
+            """,
+            (PROVIDER_SETTINGS_KEY, payload),
+        )
+        return self.get_provider_settings()
+
+
+class QnaRepository:
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def create(
+        self,
+        paper_id: int,
+        question: str,
+        answer: str,
+        cited_chunks: list[dict[str, object]],
+        mode: str,
+        provider: str,
+    ) -> QnaEntry:
+        cursor = self._conn.execute(
+            """
+            insert into qna_entries (
+                paper_id,
+                question,
+                answer,
+                cited_chunks,
+                mode,
+                provider
+            )
+            values (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                paper_id,
+                question,
+                answer,
+                json.dumps(cited_chunks, ensure_ascii=True),
+                mode,
+                provider,
+            ),
+        )
+        return self.get(cursor.lastrowid)
+
+    def get(self, entry_id: int) -> QnaEntry:
+        row = self._conn.execute(
+            """
+            select id, paper_id, question, answer, cited_chunks, mode, provider, created_at
+            from qna_entries
+            where id = ?
+            """,
+            (entry_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"qna entry not found: {entry_id}")
+        return _qna_from_row(row)
+
+    def list_for_paper(self, paper_id: int) -> list[QnaEntry]:
+        rows = self._conn.execute(
+            """
+            select id, paper_id, question, answer, cited_chunks, mode, provider, created_at
+            from qna_entries
+            where paper_id = ?
+            order by created_at desc, id desc
+            """,
+            (paper_id,),
+        ).fetchall()
+        return [_qna_from_row(row) for row in rows]
+
+
+def _qna_from_row(row: sqlite3.Row) -> QnaEntry:
+    payload = dict(row)
+    payload["cited_chunks"] = json.loads(str(payload["cited_chunks"]))
+    return QnaEntry(**payload)
+
+
+def _tokenize(value: str) -> set[str]:
+    return set(re.findall(r"[a-zA-Z0-9]+", value.lower()))
+
+
+def _overlap_score(query_terms: set[str], chunk_terms: set[str]) -> int:
+    return len(query_terms & chunk_terms)

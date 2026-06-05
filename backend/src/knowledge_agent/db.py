@@ -63,6 +63,23 @@ def init_db(conn: sqlite3.Connection) -> None:
             chunk_id unindexed,
             page_number unindexed
         );
+
+        create table if not exists settings (
+            key text primary key,
+            value text not null,
+            updated_at text not null default current_timestamp
+        );
+
+        create table if not exists qna_entries (
+            id integer primary key autoincrement,
+            paper_id integer not null references papers(id) on delete cascade,
+            question text not null,
+            answer text not null,
+            cited_chunks text not null,
+            mode text not null,
+            provider text not null,
+            created_at text not null default current_timestamp
+        );
         """
     )
     _ensure_column(
