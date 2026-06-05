@@ -3,9 +3,11 @@ import { FormEvent, useEffect, useState } from "react";
 import {
   AskPaperQuestionResponse,
   askPaperQuestion,
+  exportBibliography,
   getHealth,
   getProviderSettings,
   getReaderContext,
+  importBibliography,
   importPdf,
   listPapers,
   Paper,
@@ -21,6 +23,9 @@ export default function App() {
   const [backendStatus, setBackendStatus] = useState("checking");
   const [papers, setPapers] = useState<Paper[]>([]);
   const [sourcePath, setSourcePath] = useState("");
+  const [bibliographyPath, setBibliographyPath] = useState("");
+  const [bibliographyFormat, setBibliographyFormat] = useState("auto");
+  const [exportPreview, setExportPreview] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [searchHits, setSearchHits] = useState<SearchHit[]>([]);
   const [readerContext, setReaderContext] = useState<ReaderContext | null>(null);
@@ -82,6 +87,32 @@ export default function App() {
       await refreshPapers();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Import failed");
+    }
+  }
+
+  async function handleBibliographyImport(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setMessage("");
+    try {
+      const response = await importBibliography(bibliographyPath, bibliographyFormat);
+      setBibliographyPath("");
+      setMessage(
+        `Bibliography imported: ${response.imported_count} new, ${response.updated_count} updated`,
+      );
+      await refreshPapers();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Bibliography import failed");
+    }
+  }
+
+  async function handleBibliographyExport(format: "bibtex" | "ris") {
+    setMessage("");
+    try {
+      const response = await exportBibliography(format);
+      setExportPreview(response.content);
+      setMessage(`Exported ${response.format}`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Bibliography export failed");
     }
   }
 
@@ -180,6 +211,49 @@ export default function App() {
           </div>
         </form>
 
+        <form className="panel-form bibliography-form" onSubmit={handleBibliographyImport}>
+          <label htmlFor="bibliography-path">Bibliography source path</label>
+          <input
+            id="bibliography-path"
+            value={bibliographyPath}
+            onChange={(event) => setBibliographyPath(event.target.value)}
+            placeholder="F:\\papers\\library.bib"
+          />
+
+          <label htmlFor="bibliography-format">Bibliography format</label>
+          <div className="form-row">
+            <select
+              id="bibliography-format"
+              value={bibliographyFormat}
+              onChange={(event) => setBibliographyFormat(event.target.value)}
+            >
+              <option value="auto">Auto</option>
+              <option value="bibtex">BibTeX</option>
+              <option value="ris">RIS</option>
+            </select>
+            <button type="submit" disabled={bibliographyPath.trim().length === 0}>
+              Import bibliography
+            </button>
+          </div>
+
+          <div className="export-actions">
+            <button type="button" onClick={() => handleBibliographyExport("bibtex")}>
+              Export BibTeX
+            </button>
+            <button type="button" onClick={() => handleBibliographyExport("ris")}>
+              Export RIS
+            </button>
+          </div>
+
+          <label htmlFor="bibliography-export-preview">Bibliography export preview</label>
+          <textarea
+            id="bibliography-export-preview"
+            value={exportPreview}
+            onChange={(event) => setExportPreview(event.target.value)}
+            rows={7}
+          />
+        </form>
+
         {message ? <p className="message">{message}</p> : null}
 
         <section className="library-section" aria-labelledby="library-heading">
@@ -197,7 +271,7 @@ export default function App() {
                   aria-label={`Open ${paper.title}`}
                 >
                   <span className="paper-title">{paper.title}</span>
-                  <span className="paper-meta">{paper.doi ?? "No DOI"}</span>
+                  <span className="paper-meta">{paperMetadata(paper)}</span>
                 </button>
               ))
             )}
@@ -214,7 +288,7 @@ export default function App() {
                 <button
                   className="search-hit"
                   key={hit.chunk_id}
-                  onClick={() => openPaper({ id: hit.paper_id, title: hit.title, year: hit.year, doi: hit.doi, created_at: "" })}
+                  onClick={() => openPaper(paperFromSearchHit(hit))}
                   type="button"
                   aria-label={`Open ${hit.title} page ${hit.page_number}`}
                 >
@@ -351,4 +425,26 @@ export default function App() {
 function emptyToNull(value: string): string | null {
   const stripped = value.trim();
   return stripped.length > 0 ? stripped : null;
+}
+
+function paperMetadata(paper: Paper): string {
+  const parts = [paper.authors, paper.year?.toString()].filter(Boolean);
+  if (parts.length > 0) return parts.join(" · ");
+  return paper.doi ?? "No DOI";
+}
+
+function paperFromSearchHit(hit: SearchHit): Paper {
+  return {
+    id: hit.paper_id,
+    title: hit.title,
+    authors: null,
+    year: hit.year,
+    doi: hit.doi,
+    venue: null,
+    abstract: null,
+    citation_key: null,
+    arxiv_id: null,
+    entry_type: null,
+    created_at: "",
+  };
 }

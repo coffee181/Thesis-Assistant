@@ -83,6 +83,132 @@ describe("App", () => {
     expect(await screen.findByText("Imported")).toBeInTheDocument();
   });
 
+  it("imports a bibliography file path and refreshes the library", async () => {
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ status: "ok", service: "knowledge-agent-backend" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ papers: [] }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => defaultProviderSettings,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ format: "bibtex", imported_count: 1, updated_count: 0, papers: [] }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          papers: [
+            {
+              id: 3,
+              title: "Local Knowledge Agents",
+              authors: "Jane Doe and John Smith",
+              year: 2024,
+              doi: "10.1234/local",
+              venue: "Journal of Local Research",
+              abstract: null,
+              citation_key: "doe2024local",
+              arxiv_id: null,
+              entry_type: "article",
+              created_at: "now",
+            },
+          ],
+        }),
+      });
+
+    render(<App />);
+    await userEvent.type(await screen.findByLabelText("Bibliography source path"), "F:\\papers\\library.bib");
+    await userEvent.selectOptions(screen.getByLabelText("Bibliography format"), "bibtex");
+    await userEvent.click(screen.getByRole("button", { name: "Import bibliography" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://127.0.0.1:8765/api/imports/bibliography",
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
+    expect(await screen.findByText("Bibliography imported: 1 new, 0 updated")).toBeInTheDocument();
+    expect(await screen.findByText("Local Knowledge Agents")).toBeInTheDocument();
+  });
+
+  it("displays paper author and year metadata when present", async () => {
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ status: "ok", service: "knowledge-agent-backend" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          papers: [
+            {
+              id: 1,
+              title: "Metadata Paper",
+              authors: "Jane Doe and John Smith",
+              year: 2024,
+              doi: null,
+              venue: null,
+              abstract: null,
+              citation_key: "doe2024metadata",
+              arxiv_id: null,
+              entry_type: "article",
+              created_at: "now",
+            },
+          ],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => defaultProviderSettings,
+      });
+
+    render(<App />);
+
+    expect(await screen.findByText("Metadata Paper")).toBeInTheDocument();
+    expect(await screen.findByText("Jane Doe and John Smith · 2024")).toBeInTheDocument();
+  });
+
+  it("exports BibTeX and displays it in a preview area", async () => {
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ status: "ok", service: "knowledge-agent-backend" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ papers: [] }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => defaultProviderSettings,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          format: "bibtex",
+          content: "@article{doe2024local,\n  title = {Local Knowledge Agents}\n}",
+        }),
+      });
+
+    render(<App />);
+    await userEvent.click(await screen.findByRole("button", { name: "Export BibTeX" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://127.0.0.1:8765/api/exports/bibliography?format=bibtex",
+      );
+    });
+    expect(await screen.findByLabelText("Bibliography export preview")).toHaveValue(
+      "@article{doe2024local,\n  title = {Local Knowledge Agents}\n}",
+    );
+  });
+
   it("searches the local library and displays page hits", async () => {
     fetchMock
       .mockResolvedValueOnce({

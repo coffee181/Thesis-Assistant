@@ -3,8 +3,14 @@ const API_BASE = "http://127.0.0.1:8765";
 export type Paper = {
   id: number;
   title: string;
+  authors: string | null;
   year: number | null;
   doi: string | null;
+  venue: string | null;
+  abstract: string | null;
+  citation_key: string | null;
+  arxiv_id: string | null;
+  entry_type: string | null;
   created_at: string;
 };
 
@@ -26,6 +32,18 @@ export type PapersResponse = {
 export type HealthResponse = {
   status: string;
   service: string;
+};
+
+export type ImportBibliographyResponse = {
+  format: string;
+  imported_count: number;
+  updated_count: number;
+  papers: Paper[];
+};
+
+export type ExportBibliographyResponse = {
+  format: string;
+  content: string;
 };
 
 export type SearchHit = {
@@ -110,6 +128,28 @@ export async function importPdf(sourcePath: string): Promise<void> {
     const payload = await response.json().catch(() => ({ detail: "Import failed" }));
     throw new Error(payload.detail ?? "Import failed");
   }
+}
+
+export async function importBibliography(
+  sourcePath: string,
+  format: string,
+): Promise<ImportBibliographyResponse> {
+  const response = await fetch(`${API_BASE}/api/imports/bibliography`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source_path: sourcePath, format }),
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({ detail: "Bibliography import failed" }));
+    throw new Error(payload.detail ?? "Bibliography import failed");
+  }
+  return response.json();
+}
+
+export async function exportBibliography(format: "bibtex" | "ris"): Promise<ExportBibliographyResponse> {
+  const response = await fetch(`${API_BASE}/api/exports/bibliography?format=${format}`);
+  if (!response.ok) throw new Error("Could not export bibliography");
+  return response.json();
 }
 
 export async function searchLocal(query: string): Promise<LocalSearchResponse> {

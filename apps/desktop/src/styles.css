@@ -70,20 +70,34 @@ textarea {
   margin-bottom: 8px;
 }
 
+.panel-form input,
+.panel-form select,
+.panel-form textarea {
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  width: 100%;
+}
+
+.panel-form textarea {
+  min-height: 150px;
+  resize: vertical;
+}
+
 .form-row {
   display: flex;
   gap: 8px;
 }
 
-.form-row input {
-  border: 1px solid #cbd5e1;
-  border-radius: 6px;
+.form-row input,
+.form-row select {
   flex: 1;
   min-width: 0;
-  padding: 10px 12px;
 }
 
-.form-row button {
+.form-row button,
+.export-actions button {
   background: #1f2937;
   border: 0;
   border-radius: 6px;
@@ -95,6 +109,21 @@ textarea {
 .form-row button:disabled {
   cursor: not-allowed;
   opacity: 0.45;
+}
+
+.bibliography-form {
+  display: grid;
+  gap: 10px;
+}
+
+.bibliography-form label {
+  margin: 0;
+}
+
+.export-actions {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 1fr 1fr;
 }
 
 .message {
