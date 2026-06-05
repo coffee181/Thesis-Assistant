@@ -88,13 +88,6 @@ pub fn is_backend_port_open(addr: &str) -> bool {
     TcpStream::connect_timeout(&socket_addr, Duration::from_millis(150)).is_ok()
 }
 
-pub fn resolve_backend_launch_from_env(
-    current_dir: &Path,
-    env: &HashMap<String, String>,
-) -> Option<BackendLaunch> {
-    resolve_backend_launch(current_dir, None, env)
-}
-
 pub fn resolve_backend_launch(
     current_dir: &Path,
     resource_dir: Option<&Path>,
@@ -195,7 +188,7 @@ mod tests {
     fn resolves_development_backend_from_repo_root() {
         let root = temp_repo();
         let cwd = root.join("apps/desktop/src-tauri");
-        let launch = resolve_backend_launch_from_env(&cwd, &HashMap::new()).unwrap();
+        let launch = resolve_backend_launch(&cwd, None, &HashMap::new()).unwrap();
 
         assert_eq!(launch.cwd, root);
         assert!(launch.program.ends_with(".venv\\Scripts\\python.exe"));
@@ -227,7 +220,7 @@ mod tests {
             "--host 127.0.0.1 --port 8765".to_string(),
         );
 
-        let launch = resolve_backend_launch_from_env(Path::new("F:\\nowhere"), &env).unwrap();
+        let launch = resolve_backend_launch(Path::new("F:\\nowhere"), None, &env).unwrap();
 
         assert_eq!(launch.program, PathBuf::from("F:\\bundle\\backend.exe"));
         assert_eq!(launch.args, vec!["--host", "127.0.0.1", "--port", "8765"]);
