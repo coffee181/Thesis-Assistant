@@ -6,8 +6,14 @@ class PaperResponse(BaseModel):
 
     id: int
     title: str
+    authors: str | None
     year: int | None
     doi: str | None
+    venue: str | None
+    abstract: str | None
+    citation_key: str | None
+    arxiv_id: str | None
+    entry_type: str | None
     created_at: str
 
 
@@ -32,6 +38,23 @@ class ImportPdfResponse(BaseModel):
     imported: bool
     paper: PaperResponse
     document: DocumentResponse
+
+
+class ImportBibliographyRequest(BaseModel):
+    source_path: str = Field(min_length=1)
+    format: str | None = Field(default=None, pattern="^(auto|bib|bibtex|ris)$")
+
+
+class ImportBibliographyResponse(BaseModel):
+    format: str
+    imported_count: int
+    updated_count: int
+    papers: list[PaperResponse]
+
+
+class ExportBibliographyResponse(BaseModel):
+    format: str
+    content: str
 
 
 class PapersResponse(BaseModel):

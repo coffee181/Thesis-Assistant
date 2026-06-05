@@ -6,6 +6,11 @@ from knowledge_agent.assistant import (
     ProviderConfigurationError,
     answer_current_paper_question,
 )
+from knowledge_agent.bibliography import (
+    export_bibtex,
+    export_ris,
+    parse_bibliography,
+)
 from knowledge_agent.config import load_config
 from knowledge_agent.db import connect, init_db
 from knowledge_agent.import_service import import_pdf
@@ -21,6 +26,9 @@ from knowledge_agent.schemas import (
     AskPaperQuestionRequest,
     AskPaperQuestionResponse,
     CitationResponse,
+    ExportBibliographyResponse,
+    ImportBibliographyRequest,
+    ImportBibliographyResponse,
     ImportPdfRequest,
     ImportPdfResponse,
     LocalSearchResponse,
@@ -166,6 +174,61 @@ def create_app(
             document=result.document,
         )
 
+    @app.post(
+        "/api/imports/bibliography",
+        response_model=ImportBibliographyResponse,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def import_bibliography_endpoint(
+        request: ImportBibliographyRequest,
+    ) -> ImportBibliographyResponse:
+        source_path = Path(request.source_path)
+        if not source_path.exists():
+            raise HTTPException(status_code=404, detail="source bibliography not found")
+        try:
+            format_name = _bibliography_format(request.format, source_path)
+            records = parse_bibliography(
+                source_path.read_text(encoding="utf-8"),
+                format_name,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        imported_count = 0
+        updated_count = 0
+        imported_papers = []
+        with connect(config.database_path) as conn:
+            papers = PapersRepository(conn)
+            known_ids = {paper.id for paper in papers.list_all()}
+            for record in records:
+                paper = papers.upsert_metadata(record)
+                imported_papers.append(paper)
+                if paper.id in known_ids:
+                    updated_count += 1
+                else:
+                    imported_count += 1
+                    known_ids.add(paper.id)
+
+        return ImportBibliographyResponse(
+            format=format_name,
+            imported_count=imported_count,
+            updated_count=updated_count,
+            papers=imported_papers,
+        )
+
+    @app.get(
+        "/api/exports/bibliography",
+        response_model=ExportBibliographyResponse,
+    )
+    def export_bibliography_endpoint(
+        format: str = Query(pattern="^(bib|bibtex|ris)$"),
+    ) -> ExportBibliographyResponse:
+        format_name = _bibliography_format(format, None)
+        with connect(config.database_path) as conn:
+            papers = PapersRepository(conn).list_all()
+        content = export_bibtex(papers) if format_name == "bibtex" else export_ris(papers)
+        return ExportBibliographyResponse(format=format_name, content=content)
+
     return app
 
 
@@ -200,3 +263,21 @@ def _blank_to_none(value: str | None) -> str | None:
         return None
     stripped = value.strip()
     return stripped or None
+
+
+def _bibliography_format(format_name: str | None, source_path: Path | None) -> str:
+    normalized = (format_name or "auto").strip().lower()
+    if normalized == "auto":
+        if source_path is None:
+            raise ValueError("bibliography format is required")
+        suffix = source_path.suffix.lower()
+        if suffix == ".bib":
+            return "bibtex"
+        if suffix == ".ris":
+            return "ris"
+        raise ValueError("unsupported bibliography format")
+    if normalized == "bib":
+        return "bibtex"
+    if normalized in {"bibtex", "ris"}:
+        return normalized
+    raise ValueError("unsupported bibliography format")
