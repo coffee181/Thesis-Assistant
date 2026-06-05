@@ -2,24 +2,43 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, status
 
+from knowledge_agent.assistant import (
+    ProviderConfigurationError,
+    answer_current_paper_question,
+)
 from knowledge_agent.config import load_config
 from knowledge_agent.db import connect, init_db
 from knowledge_agent.import_service import import_pdf
-from knowledge_agent.models import Chunk
-from knowledge_agent.repositories import ChunksRepository, DocumentsRepository, PapersRepository
+from knowledge_agent.models import Chunk, ProviderSettings
+from knowledge_agent.providers import ChatProvider, HttpChatProvider
+from knowledge_agent.repositories import (
+    ChunksRepository,
+    DocumentsRepository,
+    PapersRepository,
+    SettingsRepository,
+)
 from knowledge_agent.schemas import (
+    AskPaperQuestionRequest,
+    AskPaperQuestionResponse,
+    CitationResponse,
     ImportPdfRequest,
     ImportPdfResponse,
     LocalSearchResponse,
     PapersResponse,
+    ProviderSettingsRequest,
+    ProviderSettingsResponse,
     ReaderContextResponse,
     ReaderPageResponse,
 )
 
 
-def create_app(library_dir: Path | None = None) -> FastAPI:
+def create_app(
+    library_dir: Path | None = None,
+    chat_provider: ChatProvider | None = None,
+) -> FastAPI:
     config = load_config(library_dir)
     config.library_dir.mkdir(parents=True, exist_ok=True)
+    resolved_chat_provider = chat_provider or HttpChatProvider()
 
     with connect(config.database_path) as conn:
         init_db(conn)
@@ -35,6 +54,33 @@ def create_app(library_dir: Path | None = None) -> FastAPI:
         with connect(config.database_path) as conn:
             papers = PapersRepository(conn).list_all()
         return PapersResponse(papers=papers)
+
+    @app.get(
+        "/api/settings/provider",
+        response_model=ProviderSettingsResponse,
+    )
+    def get_provider_settings() -> ProviderSettingsResponse:
+        with connect(config.database_path) as conn:
+            settings = SettingsRepository(conn).get_provider_settings()
+        return ProviderSettingsResponse.model_validate(settings.to_public())
+
+    @app.put(
+        "/api/settings/provider",
+        response_model=ProviderSettingsResponse,
+    )
+    def save_provider_settings(
+        request: ProviderSettingsRequest,
+    ) -> ProviderSettingsResponse:
+        settings = ProviderSettings(
+            provider=request.provider,
+            base_url=_blank_to_none(request.base_url),
+            model=_blank_to_none(request.model),
+            api_key=_blank_to_none(request.api_key),
+            outbound_context_policy=request.outbound_context_policy,
+        )
+        with connect(config.database_path) as conn:
+            saved_settings = SettingsRepository(conn).save_provider_settings(settings)
+        return ProviderSettingsResponse.model_validate(saved_settings.to_public())
 
     @app.get("/api/search/local", response_model=LocalSearchResponse)
     def search_local(q: str = Query(min_length=1)) -> LocalSearchResponse:
@@ -67,6 +113,37 @@ def create_app(library_dir: Path | None = None) -> FastAPI:
             paper=paper,
             document=document,
             pages=_reader_pages_from_chunks(paper_chunks),
+        )
+
+    @app.post(
+        "/api/papers/{paper_id}/assistant/ask",
+        response_model=AskPaperQuestionResponse,
+    )
+    def ask_current_paper(
+        paper_id: int,
+        request: AskPaperQuestionRequest,
+    ) -> AskPaperQuestionResponse:
+        try:
+            with connect(config.database_path) as conn:
+                answer = answer_current_paper_question(
+                    conn=conn,
+                    paper_id=paper_id,
+                    question=request.question,
+                    chat_provider=resolved_chat_provider,
+                )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="paper not found") from exc
+        except ProviderConfigurationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return AskPaperQuestionResponse(
+            answer=answer.answer,
+            citations=[
+                CitationResponse(**citation.to_dict())
+                for citation in answer.citations
+            ],
+            mode=answer.mode,
+            provider=answer.provider,
+            qna_id=answer.qna_id,
         )
 
     @app.post(
@@ -116,3 +193,10 @@ def _append_with_overlap(current: str, next_text: str) -> str:
         if current.endswith(next_text[:overlap]):
             return current + next_text[overlap:]
     return current + next_text
+
+
+def _blank_to_none(value: str | None) -> str | None:
+    if value is None:
+        return None
+    stripped = value.strip()
+    return stripped or None

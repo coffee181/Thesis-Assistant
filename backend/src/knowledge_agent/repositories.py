@@ -271,7 +271,11 @@ class ChunksRepository:
         scored_chunks.sort(key=lambda item: (-item[0], item[1]))
         if scored_chunks[0][0] == 0:
             return chunks[:limit]
-        return [chunk for _, _, chunk in scored_chunks[:limit]]
+        return [
+            chunk
+            for score, _, chunk in scored_chunks
+            if score > 0
+        ][:limit]
 
     def _paper_title(self, paper_id: int) -> str:
         row = self._conn.execute(

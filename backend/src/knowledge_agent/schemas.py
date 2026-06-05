@@ -65,3 +65,45 @@ class ReaderContextResponse(BaseModel):
     paper: PaperResponse
     document: DocumentResponse
     pages: list[ReaderPageResponse]
+
+
+class ProviderSettingsRequest(BaseModel):
+    provider: str = Field(pattern="^(none|openai_compatible|ollama)$")
+    base_url: str | None = None
+    model: str | None = None
+    api_key: str | None = None
+    outbound_context_policy: str = Field(
+        default="snippets_only",
+        pattern="^(snippets_only|local_only)$",
+    )
+
+
+class ProviderSettingsResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    provider: str
+    base_url: str | None
+    model: str | None
+    outbound_context_policy: str
+    api_key_configured: bool
+
+
+class AskPaperQuestionRequest(BaseModel):
+    question: str = Field(min_length=1)
+
+
+class CitationResponse(BaseModel):
+    chunk_id: int
+    paper_id: int
+    title: str
+    page_number: int
+    snippet: str
+    source_span: str
+
+
+class AskPaperQuestionResponse(BaseModel):
+    answer: str
+    citations: list[CitationResponse]
+    mode: str
+    provider: str
+    qna_id: int | None
