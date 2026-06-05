@@ -63,6 +63,72 @@ def test_import_pdf_endpoint_reports_missing_file(tmp_path: Path):
     assert response.json()["detail"] == "source PDF not found"
 
 
+def test_library_endpoint_reports_active_library_path(tmp_path: Path):
+    library_dir = tmp_path / "library"
+    client = TestClient(create_app(library_dir=library_dir))
+
+    response = client.get("/api/library")
+
+    assert response.status_code == 200
+    assert response.json()["library_dir"] == str(library_dir)
+    assert response.json()["database_path"] == str(library_dir / "database.sqlite")
+    assert response.json()["paper_count"] == 0
+
+
+def test_select_library_switches_active_database(tmp_path: Path):
+    first_library = tmp_path / "first-library"
+    second_library = tmp_path / "second-library"
+    source = tmp_path / "Paper.pdf"
+    source.write_bytes(b"%PDF-1.4 paper")
+    client = TestClient(create_app(library_dir=first_library))
+    client.post("/api/imports/pdf", json={"source_path": str(source)})
+
+    response = client.put("/api/library", json={"library_dir": str(second_library)})
+    list_response = client.get("/api/papers")
+
+    assert response.status_code == 200
+    assert response.json()["library_dir"] == str(second_library)
+    assert (second_library / "database.sqlite").exists()
+    assert list_response.json()["papers"] == []
+
+
+def test_import_folder_endpoint_imports_recursive_pdfs(tmp_path: Path):
+    source_dir = tmp_path / "papers"
+    nested = source_dir / "nested"
+    nested.mkdir(parents=True)
+    (source_dir / "First.pdf").write_bytes(b"%PDF-1.4 first")
+    (nested / "Second.pdf").write_bytes(b"%PDF-1.4 second")
+    library_dir = tmp_path / "library"
+    client = TestClient(create_app(library_dir=library_dir))
+
+    response = client.post("/api/imports/folder", json={"source_dir": str(source_dir)})
+    list_response = client.get("/api/papers")
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["discovered_count"] == 2
+    assert payload["imported_count"] == 2
+    assert payload["skipped_count"] == 0
+    assert payload["failed_count"] == 0
+    assert sorted(paper["title"] for paper in list_response.json()["papers"]) == [
+        "First",
+        "Second",
+    ]
+
+
+def test_import_folder_endpoint_reports_missing_folder(tmp_path: Path):
+    library_dir = tmp_path / "library"
+    client = TestClient(create_app(library_dir=library_dir))
+
+    response = client.post(
+        "/api/imports/folder",
+        json={"source_dir": str(tmp_path / "missing")},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "source folder not found"
+
+
 def test_import_bibliography_endpoint_imports_bib_file_and_lists_metadata(
     tmp_path: Path,
 ):

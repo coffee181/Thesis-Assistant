@@ -14,10 +14,10 @@ from knowledge_agent.bibliography import (
     export_ris,
     parse_bibliography,
 )
-from knowledge_agent.config import load_config
+from knowledge_agent.config import AppConfig, load_config
 from knowledge_agent.db import connect, init_db
 from knowledge_agent.discovery import ExternalDiscoveryClient
-from knowledge_agent.import_service import import_pdf
+from knowledge_agent.import_service import import_pdf, import_pdf_folder
 from knowledge_agent.models import BibliographyRecord, Chunk, ProviderSettings, SearchResultRecord
 from knowledge_agent.providers import ChatProvider, HttpChatProvider
 from knowledge_agent.repositories import (
@@ -39,11 +39,15 @@ from knowledge_agent.schemas import (
     ExportBibliographyResponse,
     HighlightResponse,
     HighlightsResponse,
+    ImportFolderFailureResponse,
+    ImportFolderRequest,
+    ImportFolderResponse,
     ImportPendingDownloadRequest,
     ImportBibliographyRequest,
     ImportBibliographyResponse,
     ImportPdfRequest,
     ImportPdfResponse,
+    LibraryResponse,
     LocalSearchResponse,
     NoteResponse,
     NotesResponse,
@@ -54,6 +58,7 @@ from knowledge_agent.schemas import (
     ProviderSettingsResponse,
     ReaderContextResponse,
     ReaderPageResponse,
+    SelectLibraryRequest,
     SelectedTextAssistantRequest,
 )
 
@@ -78,6 +83,20 @@ def create_app(
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok", "service": "knowledge-agent-backend"}
+
+    @app.get("/api/library", response_model=LibraryResponse)
+    def get_library() -> LibraryResponse:
+        return _library_response(config)
+
+    @app.put("/api/library", response_model=LibraryResponse)
+    def select_library(request: SelectLibraryRequest) -> LibraryResponse:
+        nonlocal config
+        selected = load_config(Path(request.library_dir))
+        selected.library_dir.mkdir(parents=True, exist_ok=True)
+        with connect(selected.database_path) as conn:
+            init_db(conn)
+        config = selected
+        return _library_response(config)
 
     @app.get("/api/papers", response_model=PapersResponse)
     def list_papers() -> PapersResponse:
@@ -314,6 +333,43 @@ def create_app(
         )
 
     @app.post(
+        "/api/imports/folder",
+        response_model=ImportFolderResponse,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def import_folder_endpoint(request: ImportFolderRequest) -> ImportFolderResponse:
+        source_dir = Path(request.source_dir)
+        if not source_dir.exists():
+            raise HTTPException(status_code=404, detail="source folder not found")
+        try:
+            with connect(config.database_path) as conn:
+                result = import_pdf_folder(conn, config.library_dir, source_dir)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return ImportFolderResponse(
+            source_path=result.source_path,
+            discovered_count=result.discovered_count,
+            imported_count=result.imported_count,
+            skipped_count=result.skipped_count,
+            failed_count=result.failed_count,
+            imports=[
+                ImportPdfResponse(
+                    imported=item.imported,
+                    paper=item.paper,
+                    document=item.document,
+                )
+                for item in result.imports
+            ],
+            failures=[
+                ImportFolderFailureResponse(
+                    source_path=failure.source_path,
+                    error=failure.error,
+                )
+                for failure in result.failures
+            ],
+        )
+
+    @app.post(
         "/api/imports/bibliography",
         response_model=ImportBibliographyResponse,
         status_code=status.HTTP_201_CREATED,
@@ -443,6 +499,16 @@ def create_app(
         )
 
     return app
+
+
+def _library_response(config: AppConfig) -> LibraryResponse:
+    with connect(config.database_path) as conn:
+        paper_count = len(PapersRepository(conn).list_all())
+    return LibraryResponse(
+        library_dir=str(config.library_dir),
+        database_path=str(config.database_path),
+        paper_count=paper_count,
+    )
 
 
 def _reader_pages_from_chunks(chunks: list[Chunk]) -> list[ReaderPageResponse]:

@@ -40,6 +40,35 @@ class ImportPdfResponse(BaseModel):
     document: DocumentResponse
 
 
+class LibraryResponse(BaseModel):
+    library_dir: str
+    database_path: str
+    paper_count: int
+
+
+class SelectLibraryRequest(BaseModel):
+    library_dir: str = Field(min_length=1)
+
+
+class ImportFolderRequest(BaseModel):
+    source_dir: str = Field(min_length=1)
+
+
+class ImportFolderFailureResponse(BaseModel):
+    source_path: str
+    error: str
+
+
+class ImportFolderResponse(BaseModel):
+    source_path: str
+    discovered_count: int
+    imported_count: int
+    skipped_count: int
+    failed_count: int
+    imports: list[ImportPdfResponse]
+    failures: list[ImportFolderFailureResponse]
+
+
 class ImportBibliographyRequest(BaseModel):
     source_path: str = Field(min_length=1)
     format: str | None = Field(default=None, pattern="^(auto|bib|bibtex|ris)$")
