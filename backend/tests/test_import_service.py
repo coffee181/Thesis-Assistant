@@ -3,7 +3,7 @@ from pathlib import Path
 from knowledge_agent.db import connect, init_db
 from knowledge_agent.import_service import import_pdf, import_pdf_folder
 from knowledge_agent.models import BibliographyRecord
-from knowledge_agent.repositories import ChunksRepository, DocumentsRepository
+from knowledge_agent.repositories import ChunksRepository, DocumentsRepository, PapersRepository
 
 
 def test_import_pdf_copies_file_and_creates_records(tmp_path: Path):
@@ -99,6 +99,114 @@ def test_import_pdf_duplicate_hash_updates_existing_metadata(tmp_path: Path):
     assert second.paper.title == "Local Knowledge Agents"
     assert second.paper.doi == "10.1234/local"
     assert second.paper.authors == "Jane Doe"
+
+
+def test_import_pdf_attaches_document_to_existing_metadata_doi(tmp_path: Path):
+    source = tmp_path / "download.pdf"
+    source.write_bytes(b"%PDF-1.4 downloaded with existing metadata")
+    library_root = tmp_path / "library"
+    metadata = BibliographyRecord(
+        citation_key="doe2024local",
+        title="Local Knowledge Agents",
+        authors="Jane Doe and John Smith",
+        year=2024,
+        doi="10.1234/local",
+        venue="Journal of Local Research",
+        abstract="Traceable local assistants.",
+        arxiv_id="2401.12345",
+        entry_type="article",
+    )
+
+    with connect(library_root / "database.sqlite") as conn:
+        init_db(conn)
+        existing_paper = PapersRepository(conn).upsert_metadata(metadata)
+
+        result = import_pdf(conn, library_root, source, metadata=metadata)
+        document = DocumentsRepository(conn).find_by_paper_id(existing_paper.id)
+
+    assert result.imported is True
+    assert result.paper.id == existing_paper.id
+    assert result.document.paper_id == existing_paper.id
+    assert document is not None
+    assert document.id == result.document.id
+    assert (library_root / result.document.library_path).exists()
+
+
+def test_import_pdf_moves_duplicate_hash_document_to_existing_metadata_paper(
+    tmp_path: Path,
+):
+    source = tmp_path / "download.pdf"
+    source.write_bytes(b"%PDF-1.4 duplicate bytes with later metadata")
+    library_root = tmp_path / "library"
+    metadata = BibliographyRecord(
+        citation_key="doe2024local",
+        title="Local Knowledge Agents",
+        authors="Jane Doe and John Smith",
+        year=2024,
+        doi="10.1234/local",
+        venue="Journal of Local Research",
+        abstract="Traceable local assistants.",
+        arxiv_id="2401.12345",
+        entry_type="article",
+    )
+
+    with connect(library_root / "database.sqlite") as conn:
+        init_db(conn)
+        hash_match = import_pdf(conn, library_root, source)
+        metadata_paper = PapersRepository(conn).upsert_metadata(metadata)
+
+        result = import_pdf(conn, library_root, source, metadata=metadata)
+        hash_document = DocumentsRepository(conn).find_by_hash(
+            result.document.file_hash
+        )
+        papers = PapersRepository(conn).list_all()
+
+    assert result.imported is False
+    assert result.paper.id == metadata_paper.id
+    assert result.document.id == hash_match.document.id
+    assert result.document.paper_id == metadata_paper.id
+    assert hash_document is not None
+    assert hash_document.paper_id == metadata_paper.id
+    assert [paper.id for paper in papers] == [metadata_paper.id]
+
+
+def test_import_pdf_moves_duplicate_hash_chunks_to_existing_metadata_paper(
+    tmp_path: Path,
+    write_pdf,
+):
+    source = write_pdf(
+        tmp_path / "download.pdf",
+        ["The method uses retrieval grounded citations."],
+    )
+    library_root = tmp_path / "library"
+    metadata = BibliographyRecord(
+        citation_key="doe2024local",
+        title="Local Knowledge Agents",
+        authors="Jane Doe and John Smith",
+        year=2024,
+        doi="10.1234/local",
+        venue="Journal of Local Research",
+        abstract="Traceable local assistants.",
+        arxiv_id="2401.12345",
+        entry_type="article",
+    )
+
+    with connect(library_root / "database.sqlite") as conn:
+        init_db(conn)
+        hash_match = import_pdf(conn, library_root, source)
+        metadata_paper = PapersRepository(conn).upsert_metadata(metadata)
+
+        result = import_pdf(conn, library_root, source, metadata=metadata)
+        chunks = ChunksRepository(conn)
+        moved_chunks = chunks.list_for_paper(metadata_paper.id)
+        old_chunks = chunks.list_for_paper(hash_match.paper.id)
+        hits = chunks.search("retrieval grounded")
+
+    assert result.paper.id == metadata_paper.id
+    assert moved_chunks[0].paper_id == metadata_paper.id
+    assert old_chunks == []
+    assert hits[0].paper_id == metadata_paper.id
+    assert hits[0].title == "Local Knowledge Agents"
 
 
 def test_import_pdf_extracts_text_chunks_for_valid_pdf(tmp_path: Path, write_pdf):

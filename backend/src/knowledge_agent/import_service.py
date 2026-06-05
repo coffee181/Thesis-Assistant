@@ -54,26 +54,59 @@ def import_pdf(
     if existing is not None:
         paper = papers.get(existing.paper_id)
         if metadata is not None:
-            paper = papers.update_metadata(existing.paper_id, metadata)
+            metadata_paper = papers.find_by_metadata(metadata)
+            if metadata_paper is not None and metadata_paper.id != existing.paper_id:
+                papers.merge_papers(
+                    source_paper_id=existing.paper_id,
+                    target_paper_id=metadata_paper.id,
+                )
+                existing = documents.get(existing.id)
+                paper = papers.update_metadata(metadata_paper.id, metadata)
+            else:
+                paper = papers.update_metadata(existing.paper_id, metadata)
         return ImportResult(
             paper=paper,
             document=existing,
             imported=False,
         )
 
-    title = metadata.title if metadata is not None else source_path.stem.strip()
-    paper = papers.create(
-        title=title,
-        year=metadata.year if metadata is not None else None,
-        doi=metadata.doi if metadata is not None else None,
-        authors=metadata.authors if metadata is not None else None,
-        venue=metadata.venue if metadata is not None else None,
-        abstract=metadata.abstract if metadata is not None else None,
-        citation_key=metadata.citation_key if metadata is not None else None,
-        arxiv_id=metadata.arxiv_id if metadata is not None else None,
-        entry_type=metadata.entry_type if metadata is not None else None,
+    if metadata is not None:
+        existing_paper = papers.find_by_metadata(metadata)
+        paper = (
+            papers.update_metadata(existing_paper.id, metadata)
+            if existing_paper is not None
+            else papers.create(
+                title=metadata.title,
+                year=metadata.year,
+                doi=metadata.doi,
+                authors=metadata.authors,
+                venue=metadata.venue,
+                abstract=metadata.abstract,
+                citation_key=metadata.citation_key,
+                arxiv_id=metadata.arxiv_id,
+                entry_type=metadata.entry_type,
+            )
+        )
+    else:
+        title = source_path.stem.strip()
+        paper = papers.create(
+            title=title,
+            year=None,
+            doi=None,
+            authors=None,
+            venue=None,
+            abstract=None,
+            citation_key=None,
+            arxiv_id=None,
+            entry_type=None,
+        )
+
+    target_relative = _target_relative_path(
+        paper.id,
+        paper.title,
+        file_hash,
+        paper.year,
     )
-    target_relative = _target_relative_path(paper.id, title, file_hash, paper.year)
     target_absolute = library_root / target_relative
     target_absolute.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source_path, target_absolute)

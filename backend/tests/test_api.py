@@ -43,6 +43,47 @@ class FakeDiscoveryClient:
         return self.candidates[:limit]
 
 
+def test_backend_allows_localhost_desktop_cors(tmp_path: Path):
+    library_dir = tmp_path / "library"
+    client = TestClient(create_app(library_dir=library_dir))
+
+    response = client.options(
+        "/api/imports/pdf",
+        headers={
+            "Origin": "http://127.0.0.1:5173",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type",
+        },
+    )
+
+    assert response.status_code == 200
+    assert (
+        response.headers["access-control-allow-origin"]
+        == "http://127.0.0.1:5173"
+    )
+    assert "POST" in response.headers["access-control-allow-methods"]
+    assert "content-type" in response.headers["access-control-allow-headers"].lower()
+
+
+def test_backend_allows_tauri_desktop_cors(tmp_path: Path):
+    library_dir = tmp_path / "library"
+    client = TestClient(create_app(library_dir=library_dir))
+
+    response = client.options(
+        "/api/imports/pdf",
+        headers={
+            "Origin": "http://tauri.localhost",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://tauri.localhost"
+    assert "POST" in response.headers["access-control-allow-methods"]
+    assert "content-type" in response.headers["access-control-allow-headers"].lower()
+
+
 def test_import_pdf_endpoint_then_list_papers(tmp_path: Path):
     source = tmp_path / "Endpoint Paper.pdf"
     source.write_bytes(b"%PDF-1.4 endpoint pdf")

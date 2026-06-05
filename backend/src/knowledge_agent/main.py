@@ -3,6 +3,7 @@ import sqlite3
 from typing import Callable
 
 from fastapi import FastAPI, HTTPException, Query, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 import httpx
 
@@ -81,6 +82,15 @@ def create_app(
         init_db(conn)
 
     app = FastAPI(title="Knowledge Agent Backend")
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origin_regex=(
+            r"^(tauri://localhost|http://tauri\.localhost|"
+            r"http://(127\.0\.0\.1|localhost):\d+)$"
+        ),
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     @app.get("/health")
     def health() -> dict[str, str]:

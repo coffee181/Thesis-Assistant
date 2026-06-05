@@ -112,7 +112,7 @@ class PapersRepository:
         return [Paper(**dict(row)) for row in rows]
 
     def upsert_metadata(self, record: BibliographyRecord) -> Paper:
-        existing = self._find_existing_metadata_record(record)
+        existing = self.find_by_metadata(record)
         if existing is None:
             return self.create(
                 title=record.title,
@@ -185,9 +185,23 @@ class PapersRepository:
                 paper_id,
             ),
         )
+        self._rebuild_fts_for_paper(paper_id)
         return self.get(paper_id)
 
-    def _find_existing_metadata_record(
+    def merge_papers(self, source_paper_id: int, target_paper_id: int) -> Paper:
+        if source_paper_id == target_paper_id:
+            return self.get(target_paper_id)
+
+        for table_name in ("documents", "chunks", "notes", "highlights", "qna_entries"):
+            self._conn.execute(
+                f"update {table_name} set paper_id = ? where paper_id = ?",
+                (target_paper_id, source_paper_id),
+            )
+        self._conn.execute("delete from papers where id = ?", (source_paper_id,))
+        self._rebuild_fts_for_paper(target_paper_id)
+        return self.get(target_paper_id)
+
+    def find_by_metadata(
         self,
         record: BibliographyRecord,
     ) -> Paper | None:
@@ -258,6 +272,51 @@ class PapersRepository:
             (record.title, record.year, record.year),
         ).fetchone()
         return Paper(**dict(row)) if row is not None else None
+
+    def _rebuild_fts_for_paper(self, paper_id: int) -> None:
+        rows = self._conn.execute(
+            """
+            select
+                chunks.id as chunk_id,
+                chunks.document_id,
+                chunks.page_number,
+                chunks.text,
+                papers.title as paper_title
+            from chunks
+            join papers on papers.id = chunks.paper_id
+            where chunks.paper_id = ?
+            order by chunks.document_id, chunks.page_number, chunks.chunk_index
+            """,
+            (paper_id,),
+        ).fetchall()
+        for row in rows:
+            self._conn.execute(
+                "delete from chunks_fts where rowid = ?",
+                (row["chunk_id"],),
+            )
+            self._conn.execute(
+                """
+                insert into chunks_fts (
+                    rowid,
+                    text,
+                    paper_title,
+                    paper_id,
+                    document_id,
+                    chunk_id,
+                    page_number
+                )
+                values (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row["chunk_id"],
+                    row["text"],
+                    row["paper_title"],
+                    paper_id,
+                    row["document_id"],
+                    row["chunk_id"],
+                    row["page_number"],
+                ),
+            )
 
 
 class SearchResultsRepository:
