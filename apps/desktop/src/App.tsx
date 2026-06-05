@@ -43,6 +43,7 @@ import {
   setPaperFavorite,
 } from "./api";
 import { AssistantRail } from "./components/AssistantRail";
+import { ImportDialog, ImportMode } from "./components/ImportDialog";
 import { LibraryRail } from "./components/LibraryRail";
 import { ReaderWorkspace } from "./components/ReaderWorkspace";
 import { TopBar } from "./components/TopBar";
@@ -86,6 +87,7 @@ export default function App() {
   const [tagFilter, setTagFilter] = useState("");
   const [tagInputs, setTagInputs] = useState<Record<number, string>>({});
   const [searchPerformed, setSearchPerformed] = useState(false);
+  const [importMode, setImportMode] = useState<ImportMode>("pdf");
   const [openSurface, setOpenSurface] = useState<"import" | "discover" | "jobs" | "settings" | null>(null);
   const [message, setMessage] = useState("");
 
@@ -187,6 +189,7 @@ export default function App() {
       setFolderPath("");
       setJobs((current) => [job, ...current.filter((item) => item.id !== job.id)]);
       setMessage("Folder import queued");
+      setOpenSurface(null);
       await refreshJobs();
       await refreshPapers();
     } catch (error) {
@@ -201,6 +204,7 @@ export default function App() {
       await importPdf(sourcePath);
       setSourcePath("");
       setMessage("PDF imported");
+      setOpenSurface(null);
       await refreshPapers();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Import failed");
@@ -216,6 +220,7 @@ export default function App() {
       setMessage(
         `Bibliography imported: ${response.imported_count} new, ${response.updated_count} updated`,
       );
+      setOpenSurface(null);
       await refreshPapers();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Bibliography import failed");
@@ -640,6 +645,28 @@ export default function App() {
       </div>
 
       {message ? <p className="toast-status">{message}</p> : null}
+
+      {openSurface === "import" ? (
+        <ImportDialog
+          bibliographyFormat={bibliographyFormat}
+          bibliographyPath={bibliographyPath}
+          exportPreview={exportPreview}
+          folderPath={folderPath}
+          mode={importMode}
+          sourcePath={sourcePath}
+          onBibliographyFormatChange={setBibliographyFormat}
+          onBibliographyPathChange={setBibliographyPath}
+          onClose={() => setOpenSurface(null)}
+          onExportBibliography={handleBibliographyExport}
+          onExportPreviewChange={setExportPreview}
+          onFolderPathChange={setFolderPath}
+          onImportBibliography={handleBibliographyImport}
+          onImportFolder={handleFolderImport}
+          onImportPdf={handleImport}
+          onModeChange={setImportMode}
+          onSourcePathChange={setSourcePath}
+        />
+      ) : null}
     </main>
   );
 }

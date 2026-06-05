@@ -416,6 +416,93 @@ textarea {
   z-index: 30;
 }
 
+.modal-backdrop {
+  align-items: center;
+  background: rgba(15, 23, 42, 0.38);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  position: fixed;
+  z-index: 20;
+}
+
+.modal-panel {
+  background: #ffffff;
+  border: 1px solid #d9e0ea;
+  border-radius: 8px;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.22);
+  box-sizing: border-box;
+  max-height: calc(100vh - 64px);
+  max-width: 760px;
+  overflow: auto;
+  padding: 20px;
+  width: min(760px, calc(100vw - 48px));
+}
+
+.modal-header {
+  align-items: flex-start;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.modal-header h2 {
+  font-size: 20px;
+  margin: 0 0 6px;
+}
+
+.modal-header p {
+  color: #64748b;
+  margin: 0;
+}
+
+.modal-header button,
+.secondary-actions button {
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  color: #334155;
+  cursor: pointer;
+  font-weight: 700;
+  padding: 8px 10px;
+}
+
+.import-tabs {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.dialog-form {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.dialog-form label {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.dialog-form input,
+.dialog-form select,
+.dialog-form textarea {
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  box-sizing: border-box;
+  padding: 9px 10px;
+  width: 100%;
+}
+
+.dialog-form textarea {
+  min-height: 150px;
+  resize: vertical;
+}
+
+.secondary-actions {
+  display: flex;
+  gap: 8px;
+}
+
 .sidebar {
   border-right: 1px solid #d7dde5;
   background: #ffffff;

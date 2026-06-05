@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -623,7 +623,7 @@ describe("App", () => {
     expect(await screen.findByText("folder_import - queued")).toBeInTheDocument();
   });
 
-  it("imports a PDF by source path", async () => {
+  it("imports a PDF from the import dialog", async () => {
     fetchMock
       .mockResolvedValueOnce({
         ok: true,
@@ -655,8 +655,11 @@ describe("App", () => {
       });
 
     render(<App />);
-    await userEvent.type(screen.getByLabelText("PDF source path"), "F:\\papers\\imported.pdf");
-    await userEvent.click(screen.getByRole("button", { name: "Import PDF" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Import" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Import papers" });
+    await userEvent.type(within(dialog).getByLabelText("PDF source path"), "F:\\papers\\imported.pdf");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Import PDF" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -664,6 +667,9 @@ describe("App", () => {
         expect.objectContaining({ method: "POST" }),
       );
     });
+    expect(fetchCallBody("/api/imports/pdf")).toEqual({ source_path: "F:\\papers\\imported.pdf" });
+    expect(await screen.findByText("PDF imported")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Import papers" })).not.toBeInTheDocument();
     expect(await screen.findByText("Imported")).toBeInTheDocument();
   });
 
@@ -715,9 +721,13 @@ describe("App", () => {
       });
 
     render(<App />);
-    await userEvent.type(await screen.findByLabelText("Bibliography source path"), "F:\\papers\\library.bib");
-    await userEvent.selectOptions(screen.getByLabelText("Bibliography format"), "bibtex");
-    await userEvent.click(screen.getByRole("button", { name: "Import bibliography" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Import" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Import papers" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Bibliography" }));
+    await userEvent.type(within(dialog).getByLabelText("Bibliography source path"), "F:\\papers\\library.bib");
+    await userEvent.selectOptions(within(dialog).getByLabelText("Bibliography format"), "bibtex");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Import bibliography" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -726,6 +736,7 @@ describe("App", () => {
       );
     });
     expect(await screen.findByText("Bibliography imported: 1 new, 0 updated")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Import papers" })).not.toBeInTheDocument();
     expect(await screen.findByText("Local Knowledge Agents")).toBeInTheDocument();
   });
 
@@ -938,14 +949,18 @@ describe("App", () => {
       });
 
     render(<App />);
-    await userEvent.click(await screen.findByRole("button", { name: "Export BibTeX" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Import" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Import papers" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Bibliography" }));
+    await userEvent.click(within(dialog).getByRole("button", { name: "Export BibTeX" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
         "http://127.0.0.1:8765/api/exports/bibliography?format=bibtex",
       );
     });
-    expect(await screen.findByLabelText("Bibliography export preview")).toHaveValue(
+    expect(await within(dialog).findByLabelText("Bibliography export preview")).toHaveValue(
       "@article{doe2024local,\n  title = {Local Knowledge Agents}\n}",
     );
   });
