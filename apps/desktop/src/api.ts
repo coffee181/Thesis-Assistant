@@ -340,6 +340,10 @@ export async function getReaderContext(paperId: number): Promise<ReaderContext> 
   return response.json();
 }
 
+export function paperPdfUrl(paperId: number): string {
+  return `${API_BASE}/api/papers/${paperId}/pdf`;
+}
+
 export async function getProviderSettings(): Promise<ProviderSettings> {
   const response = await fetch(`${API_BASE}/api/settings/provider`);
   if (!response.ok) throw new Error("Could not load provider settings");

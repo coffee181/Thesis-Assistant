@@ -919,6 +919,20 @@ describe("App", () => {
     expect(await screen.findByText("Context: Reader Paper - parsed")).toBeInTheDocument();
   });
 
+  it("opens the managed PDF preview while keeping extracted text selectable", async () => {
+    queueInitialReaderLoad();
+    queueOpenReaderContext();
+
+    await openReaderPaper();
+
+    const preview = await screen.findByTitle("PDF reader for Reader Paper");
+    expect(preview).toHaveAttribute(
+      "src",
+      "http://127.0.0.1:8765/api/papers/1/pdf",
+    );
+    expect(await screen.findByText("The method uses retrieval augmented generation.")).toBeInTheDocument();
+  });
+
   it("shows selected reader text in the assistant panel", async () => {
     queueInitialReaderLoad();
     queueOpenReaderContext();

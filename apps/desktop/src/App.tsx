@@ -23,6 +23,7 @@ import {
   LibraryStatus,
   Note,
   Paper,
+  paperPdfUrl,
   ProviderSettings,
   ReaderContext,
   SearchResultRecord,
@@ -600,24 +601,33 @@ export default function App() {
           <h2>{readerContext?.paper.title ?? "Reader"}</h2>
         </header>
 
-        <div className="paper-list">
-          {readerContext === null ? (
-            <p className="empty">No paper open.</p>
-          ) : readerContext.pages.length === 0 ? (
-            <p className="empty">No extracted text available.</p>
-          ) : (
-            readerContext.pages.map((page) => (
-              <article
-                className="reader-page"
-                key={page.page_number}
-                onMouseUp={() => handleReaderPageMouseUp(page.page_number)}
-              >
-                <h3>Page {page.page_number}</h3>
-                <p>{page.text}</p>
-              </article>
-            ))
-          )}
-        </div>
+        {readerContext === null ? (
+          <p className="empty">No paper open.</p>
+        ) : (
+          <div className="reader-content">
+            <iframe
+              className="pdf-preview"
+              src={paperPdfUrl(readerContext.paper.id)}
+              title={`PDF reader for ${readerContext.paper.title}`}
+            />
+            <section className="extracted-text-layer" aria-label="Extracted text">
+              {readerContext.pages.length === 0 ? (
+                <p className="empty">No extracted text available.</p>
+              ) : (
+                readerContext.pages.map((page) => (
+                  <article
+                    className="reader-page"
+                    key={page.page_number}
+                    onMouseUp={() => handleReaderPageMouseUp(page.page_number)}
+                  >
+                    <h3>Page {page.page_number}</h3>
+                    <p>{page.text}</p>
+                  </article>
+                ))
+              )}
+            </section>
+          </div>
+        )}
       </section>
 
       <aside className="assistant-panel">
