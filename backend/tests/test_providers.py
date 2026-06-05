@@ -109,6 +109,27 @@ def test_openai_compatible_provider_routes_chat_completion():
     }
 
 
+def test_openai_compatible_provider_accepts_gateway_root_url():
+    http_client = RecordingHttpClient(
+        {"choices": [{"message": {"content": "Root answer"}}]}
+    )
+    provider = HttpChatProvider(http_client=http_client)
+
+    answer = provider.complete(
+        ProviderSettings(
+            provider="openai_compatible",
+            base_url="https://api.example.test/",
+            model="research-model",
+            api_key="secret",
+            outbound_context_policy="snippets_only",
+        ),
+        [ProviderMessage(role="user", content="Question")],
+    )
+
+    assert answer == "Root answer"
+    assert http_client.requests[0]["url"] == "https://api.example.test/v1/chat/completions"
+
+
 def test_openai_compatible_provider_uses_configured_proxy_for_real_clients():
     factory = RecordingHttpClientFactory(
         {"choices": [{"message": {"content": "Proxied answer"}}]}

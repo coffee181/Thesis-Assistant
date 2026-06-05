@@ -43,19 +43,35 @@ The backend defaults to `%USERPROFILE%\KnowledgeAgentLibrary`, or `KA_LIBRARY_DI
 
 Set `Provider` to `OpenAI-compatible` or `Ollama` in the desktop `Model settings` panel.
 
-For OpenAI-compatible gateways, `Base URL` must include the API prefix expected by the gateway. For example, use:
+For OpenAI-compatible gateways, `Base URL` can be the gateway root or an API-prefixed URL. A root URL is normalized to `/v1/chat/completions`, and a `/v1` URL is preserved. For example, both of these are valid:
 
 ```text
+https://keungliang.dpdns.org/
 https://keungliang.dpdns.org/v1
 ```
 
-not only the site root. If your network needs a local proxy, set `Proxy URL`, for example:
+If your network needs a local proxy, set `Proxy URL`, for example:
 
 ```text
 http://127.0.0.1:7897
 ```
 
 API keys are stored in the local library database and are never returned by the settings API or displayed by the desktop app.
+
+## Real PDF Smoke Test
+
+Use the smoke script to verify a local PDF can be imported, parsed, and answered with current-paper citations through an OpenAI-compatible provider. The script reads secrets from environment variables and prints a short JSON summary.
+
+```powershell
+$env:KA_SMOKE_PDF='F:\knowledge-agent\2301.12652v4.pdf'
+$env:KA_SMOKE_BASE_URL='https://keungliang.dpdns.org/'
+$env:KA_SMOKE_MODEL='glm-5.1'
+$env:KA_SMOKE_API_KEY='<your key>'
+$env:KA_SMOKE_PROXY_URL='http://127.0.0.1:7897'
+.\.venv\Scripts\python .\scripts\smoke_real_pdf.py
+```
+
+Omit `KA_SMOKE_LIBRARY_DIR` to use a temporary managed library. Set it only when you want to inspect the imported library after the smoke run.
 
 ## Development
 

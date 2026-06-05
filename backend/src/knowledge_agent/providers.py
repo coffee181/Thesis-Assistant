@@ -52,7 +52,7 @@ class HttpChatProvider:
         settings: ProviderSettings,
         messages: list[ProviderMessage],
     ) -> str:
-        url = f"{_required_base_url(settings).rstrip('/')}/chat/completions"
+        url = _openai_chat_completions_url(settings)
         headers = _headers(settings)
         response = self._post(
             settings,
@@ -130,6 +130,15 @@ def _required_base_url(settings: ProviderSettings) -> str:
     if not settings.base_url:
         raise ProviderCallError("provider base_url is required")
     return settings.base_url
+
+
+def _openai_chat_completions_url(settings: ProviderSettings) -> str:
+    base_url = _required_base_url(settings).rstrip("/")
+    if base_url.endswith("/chat/completions"):
+        return base_url
+    if base_url.endswith("/v1"):
+        return f"{base_url}/chat/completions"
+    return f"{base_url}/v1/chat/completions"
 
 
 def _required_model(settings: ProviderSettings) -> str:
