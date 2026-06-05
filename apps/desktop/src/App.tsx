@@ -42,6 +42,10 @@ import {
   retryJob,
   setPaperFavorite,
 } from "./api";
+import { AssistantRail } from "./components/AssistantRail";
+import { LibraryRail } from "./components/LibraryRail";
+import { ReaderWorkspace } from "./components/ReaderWorkspace";
+import { TopBar } from "./components/TopBar";
 import "./styles.css";
 
 export default function App() {
@@ -81,6 +85,8 @@ export default function App() {
   const [favoriteFilter, setFavoriteFilter] = useState(false);
   const [tagFilter, setTagFilter] = useState("");
   const [tagInputs, setTagInputs] = useState<Record<number, string>>({});
+  const [searchPerformed, setSearchPerformed] = useState(false);
+  const [openSurface, setOpenSurface] = useState<"import" | "discover" | "jobs" | "settings" | null>(null);
   const [message, setMessage] = useState("");
 
   async function refreshPapers(filters = { favorite: favoriteFilter, tag: tagFilter }) {
@@ -156,6 +162,7 @@ export default function App() {
       setAssistantProgress("");
       setPendingDownloads({});
       setSearchHits([]);
+      setSearchPerformed(false);
       setExternalResults([]);
       setJobs([]);
       setMessage("Library selected");
@@ -228,16 +235,22 @@ export default function App() {
 
   async function handleSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    await runLocalSearch();
+  }
+
+  async function runLocalSearch() {
     const query = searchQuery.trim();
     setMessage("");
     if (!query) {
       setSearchHits([]);
+      setSearchPerformed(false);
       return;
     }
 
     try {
       const response = await searchLocal(query);
       setSearchHits(response.hits);
+      setSearchPerformed(true);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Search failed");
     }
@@ -245,6 +258,10 @@ export default function App() {
 
   async function handleApplyLibraryFilters(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    await applyLibraryFilters();
+  }
+
+  async function applyLibraryFilters() {
     setMessage("");
     try {
       await refreshPapers();
@@ -552,555 +569,77 @@ export default function App() {
 
   return (
     <main className="app-shell">
-      <aside className="sidebar">
-        <h1>Knowledge Agent</h1>
-        <p className="status">Backend: {backendStatus}</p>
+      <TopBar
+        backendStatus={backendStatus}
+        jobCount={recentJobs.filter((job) => job.status === "queued" || job.status === "running").length}
+        paperCount={libraryStatus?.paper_count ?? papers.length}
+        searchQuery={searchQuery}
+        onOpenDiscover={() => setOpenSurface("discover")}
+        onOpenImport={() => setOpenSurface("import")}
+        onOpenJobs={() => setOpenSurface("jobs")}
+        onOpenSettings={() => setOpenSurface("settings")}
+        onSearchQueryChange={setSearchQuery}
+        onSearchSubmit={runLocalSearch}
+      />
 
-        <form className="panel-form library-control" onSubmit={handleSelectLibrary}>
-          <p className="library-path">
-            Library: {libraryStatus?.library_dir ?? "loading"}
-          </p>
-          <label htmlFor="library-path">Library location</label>
-          <div className="form-row">
-            <input
-              id="library-path"
-              value={libraryPath}
-              onChange={(event) => setLibraryPath(event.target.value)}
-              placeholder="F:\\KnowledgeAgentLibrary"
-            />
-            <button type="submit" disabled={libraryPath.trim().length === 0}>
-              Select library
-            </button>
-          </div>
-        </form>
+      <div className="workspace-grid">
+        <LibraryRail
+          activePaperId={readerContext?.paper.id ?? null}
+          favoriteFilter={favoriteFilter}
+          paperFromSearchHit={paperFromSearchHit}
+          paperMetadata={paperMetadata}
+          papers={papers}
+          searchHits={searchHits}
+          searchPerformed={searchPerformed}
+          tagFilter={tagFilter}
+          tagInputs={tagInputs}
+          onAddTag={handleAddTag}
+          onApplyFilters={applyLibraryFilters}
+          onFavoriteFilterChange={setFavoriteFilter}
+          onOpenPaper={openPaper}
+          onRemoveTag={handleRemoveTag}
+          onTagFilterChange={setTagFilter}
+          onTagInputChange={(paperId, value) =>
+            setTagInputs((current) => ({
+              ...current,
+              [paperId]: value,
+            }))
+          }
+          onToggleFavorite={handleToggleFavorite}
+        />
 
-        <form className="panel-form" onSubmit={handleImport}>
-          <label htmlFor="source-path">PDF source path</label>
-          <div className="form-row">
-            <input
-              id="source-path"
-              value={sourcePath}
-              onChange={(event) => setSourcePath(event.target.value)}
-              placeholder="F:\\papers\\example.pdf"
-            />
-            <button type="submit" disabled={sourcePath.trim().length === 0}>
-              Import PDF
-            </button>
-          </div>
-        </form>
+        <ReaderWorkspace
+          activeReaderPage={activeReaderPage}
+          pdfPreviewUrl={pdfPreviewUrl()}
+          readerContext={readerContext}
+          selectedPageNumber={selectedPageNumber}
+          selectedText={selectedText}
+          selectionBusy={selectionBusy}
+          onHighlightSelection={handleHighlightSelection}
+          onOpenDiscover={() => setOpenSurface("discover")}
+          onOpenImport={() => setOpenSurface("import")}
+          onReaderPageMouseUp={handleReaderPageMouseUp}
+          onSaveSelectionAsNote={handleSaveSelectionAsNote}
+          onSelectionAction={handleSelectionAction}
+        />
 
-        <form className="panel-form" onSubmit={handleFolderImport}>
-          <label htmlFor="folder-path">PDF folder path</label>
-          <div className="form-row">
-            <input
-              id="folder-path"
-              value={folderPath}
-              onChange={(event) => setFolderPath(event.target.value)}
-              placeholder="F:\\papers"
-            />
-            <button type="submit" disabled={folderPath.trim().length === 0}>
-              Import folder
-            </button>
-          </div>
-        </form>
+        <AssistantRail
+          assistantAnswer={assistantAnswer}
+          assistantProgress={assistantProgress}
+          highlights={highlights}
+          notes={notes}
+          providerSettings={providerSettings}
+          question={question}
+          readerContext={readerContext}
+          onAsk={handleAsk}
+          onOpenReaderPage={openReaderPage}
+          onOpenSettings={() => setOpenSurface("settings")}
+          onQuestionChange={setQuestion}
+          onSaveAnswerAsNote={handleSaveAnswerAsNote}
+        />
+      </div>
 
-        <form className="panel-form" onSubmit={handleSearch}>
-          <label htmlFor="search-query">Search library</label>
-          <div className="form-row">
-            <input
-              id="search-query"
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder="retrieval, DOI, title"
-            />
-            <button type="submit" disabled={searchQuery.trim().length === 0}>
-              Search
-            </button>
-          </div>
-        </form>
-
-        <form className="panel-form" onSubmit={handleExternalSearch}>
-          <label htmlFor="external-query">External search</label>
-          <div className="form-row">
-            <input
-              id="external-query"
-              value={externalQuery}
-              onChange={(event) => setExternalQuery(event.target.value)}
-              placeholder="keyword, DOI, title, arXiv"
-            />
-            <button type="submit" disabled={externalQuery.trim().length === 0}>
-              Search external
-            </button>
-          </div>
-        </form>
-
-        <form className="panel-form bibliography-form" onSubmit={handleBibliographyImport}>
-          <label htmlFor="bibliography-path">Bibliography source path</label>
-          <input
-            id="bibliography-path"
-            value={bibliographyPath}
-            onChange={(event) => setBibliographyPath(event.target.value)}
-            placeholder="F:\\papers\\library.bib"
-          />
-
-          <label htmlFor="bibliography-format">Bibliography format</label>
-          <div className="form-row">
-            <select
-              id="bibliography-format"
-              value={bibliographyFormat}
-              onChange={(event) => setBibliographyFormat(event.target.value)}
-            >
-              <option value="auto">Auto</option>
-              <option value="bibtex">BibTeX</option>
-              <option value="ris">RIS</option>
-            </select>
-            <button type="submit" disabled={bibliographyPath.trim().length === 0}>
-              Import bibliography
-            </button>
-          </div>
-
-          <div className="export-actions">
-            <button type="button" onClick={() => handleBibliographyExport("bibtex")}>
-              Export BibTeX
-            </button>
-            <button type="button" onClick={() => handleBibliographyExport("ris")}>
-              Export RIS
-            </button>
-          </div>
-
-          <label htmlFor="bibliography-export-preview">Bibliography export preview</label>
-          <textarea
-            id="bibliography-export-preview"
-            value={exportPreview}
-            onChange={(event) => setExportPreview(event.target.value)}
-            rows={7}
-          />
-        </form>
-
-        {message ? <p className="message">{message}</p> : null}
-
-        <section className="jobs-section" aria-labelledby="jobs-heading">
-          <h2 id="jobs-heading">Jobs</h2>
-          <div className="job-list">
-            {recentJobs.length === 0 ? (
-              <p className="empty">No recent jobs.</p>
-            ) : (
-              recentJobs.map((job) => (
-                <article className="job-item" key={job.id}>
-                  <strong>
-                    {job.kind} - {job.status}
-                  </strong>
-                  <span className="job-source">{job.source_path}</span>
-                  <span>{job.processed_items} / {job.total_items} processed</span>
-                  <span>{job.succeeded_items} succeeded, {job.failed_items} failed</span>
-                  {job.error ? <span className="job-error">{job.error}</span> : null}
-                  {job.status === "failed" ? (
-                    <button
-                      type="button"
-                      onClick={() => handleRetryJob(job)}
-                      aria-label={`Retry job ${job.id}`}
-                    >
-                      Retry
-                    </button>
-                  ) : null}
-                </article>
-              ))
-            )}
-          </div>
-        </section>
-
-        <section className="library-section" aria-labelledby="library-heading">
-          <h2 id="library-heading">Library</h2>
-          <form className="library-filters" onSubmit={handleApplyLibraryFilters}>
-            <label className="checkbox-label">
-              <input
-                checked={favoriteFilter}
-                onChange={(event) => setFavoriteFilter(event.target.checked)}
-                type="checkbox"
-              />
-              Favorites only
-            </label>
-            <label htmlFor="tag-filter">Filter by tag</label>
-            <div className="form-row">
-              <input
-                id="tag-filter"
-                value={tagFilter}
-                onChange={(event) => setTagFilter(event.target.value)}
-                placeholder="reading"
-              />
-              <button type="submit">Apply library filters</button>
-            </div>
-          </form>
-          <div className="paper-list">
-            {papers.length === 0 ? (
-              <p className="empty">No papers imported yet.</p>
-            ) : (
-              papers.map((paper) => (
-                <article className="paper-row" key={paper.id}>
-                  <button
-                    className="paper-open"
-                    onClick={() => openPaper(paper)}
-                    type="button"
-                    aria-label={`Open ${paper.title}`}
-                  >
-                    <span className="paper-title">{paper.title}</span>
-                    <span className="paper-meta">{paperMetadata(paper)}</span>
-                  </button>
-                  <div className="paper-organization">
-                    <button
-                      className={paper.favorite ? "favorite-button active" : "favorite-button"}
-                      onClick={() => handleToggleFavorite(paper)}
-                      type="button"
-                      aria-label={
-                        paper.favorite
-                          ? `Remove ${paper.title} from favorites`
-                          : `Mark ${paper.title} as favorite`
-                      }
-                    >
-                      {paper.favorite ? "Favorited" : "Favorite"}
-                    </button>
-                    {paper.tags.length > 0 ? (
-                      <div className="tag-list" aria-label={`Tags for ${paper.title}`}>
-                        {paper.tags.map((tag) => (
-                          <button
-                            className="tag-pill"
-                            key={tag}
-                            onClick={() => handleRemoveTag(paper, tag)}
-                            type="button"
-                            aria-label={`Remove tag ${tag} from ${paper.title}`}
-                          >
-                            {tag}
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
-                    <form className="tag-form" onSubmit={(event) => handleAddTag(event, paper)}>
-                      <input
-                        aria-label={`Tag ${paper.title}`}
-                        value={tagInputs[paper.id] ?? ""}
-                        onChange={(event) =>
-                          setTagInputs((current) => ({
-                            ...current,
-                            [paper.id]: event.target.value,
-                          }))
-                        }
-                        placeholder="Add tag"
-                      />
-                      <button
-                        type="submit"
-                        aria-label={`Add tag to ${paper.title}`}
-                        disabled={(tagInputs[paper.id] ?? "").trim().length === 0}
-                      >
-                        Add
-                      </button>
-                    </form>
-                  </div>
-                </article>
-              ))
-            )}
-          </div>
-        </section>
-
-        <section className="library-section" aria-labelledby="search-heading">
-          <h2 id="search-heading">Search results</h2>
-          <div className="search-list">
-            {searchHits.length === 0 ? (
-              <p className="empty">No search hits.</p>
-            ) : (
-              searchHits.map((hit) =>
-                hit.page_number === null || hit.chunk_id === null ? (
-                  <article
-                    className="search-hit"
-                    key={`metadata-${hit.paper_id}`}
-                  >
-                    <span className="paper-title">{hit.title}</span>
-                    <span className="page-label">Metadata match</span>
-                    <span className="snippet">{hit.snippet}</span>
-                  </article>
-                ) : (
-                  <button
-                    className="search-hit"
-                    key={hit.chunk_id}
-                    onClick={() => openPaper(paperFromSearchHit(hit))}
-                    type="button"
-                    aria-label={`Open ${hit.title} page ${hit.page_number}`}
-                  >
-                    <span className="paper-title">{hit.title}</span>
-                    <span className="page-label">Page {hit.page_number}</span>
-                    <span className="snippet">{hit.snippet}</span>
-                  </button>
-                ),
-              )
-            )}
-          </div>
-        </section>
-
-        <section className="library-section" aria-labelledby="external-heading">
-          <h2 id="external-heading">External discovery</h2>
-          <div className="search-list">
-            {externalResults.length === 0 ? (
-              <p className="empty">No external results.</p>
-            ) : (
-              externalResults.map((result) => (
-                <article className="search-hit discovery-result" key={result.id}>
-                  <span className="paper-title">{result.title}</span>
-                  <span className="paper-meta">{resultMetadata(result)}</span>
-                  <span className="source-label">{result.source}</span>
-                  {result.doi ? <span className="snippet">DOI {result.doi}</span> : null}
-                  {result.arxiv_id ? <span className="snippet">arXiv {result.arxiv_id}</span> : null}
-                  <span className={result.pdf_url ? "availability open" : "availability closed"}>
-                    {result.pdf_url ? "Open PDF available" : "Needs access"}
-                  </span>
-                  <div className="result-actions">
-                    {pendingDownloads[result.id] ? (
-                      <button type="button" onClick={() => handleConfirmPendingImport(result)}>
-                        Confirm import
-                      </button>
-                    ) : result.pdf_url ? (
-                      <button type="button" onClick={() => handleDownloadOpenPdf(result)}>
-                        Download PDF
-                      </button>
-                    ) : null}
-                  </div>
-                </article>
-              ))
-            )}
-          </div>
-        </section>
-      </aside>
-
-      <section className="reader-pane">
-        <header className="toolbar">
-          <h2>{readerContext?.paper.title ?? "Reader"}</h2>
-        </header>
-
-        {readerContext === null ? (
-          <p className="empty">No paper open.</p>
-        ) : (
-          <div className="reader-content">
-            <iframe
-              className="pdf-preview"
-              src={pdfPreviewUrl()}
-              title={`PDF reader for ${readerContext.paper.title}`}
-            />
-            <section className="extracted-text-layer" aria-label="Extracted text">
-              {readerContext.pages.length === 0 ? (
-                <p className="empty">No extracted text available.</p>
-              ) : (
-                readerContext.pages.map((page) => (
-                  <article
-                    aria-current={
-                      activeReaderPage === page.page_number ? "page" : undefined
-                    }
-                    aria-label={`Reader page ${page.page_number}`}
-                    className={
-                      activeReaderPage === page.page_number
-                        ? "reader-page active"
-                        : "reader-page"
-                    }
-                    id={`reader-page-${page.page_number}`}
-                    key={page.page_number}
-                    onMouseUp={() => handleReaderPageMouseUp(page.page_number)}
-                  >
-                    <h3>Page {page.page_number}</h3>
-                    <p>{page.text}</p>
-                  </article>
-                ))
-              )}
-            </section>
-          </div>
-        )}
-      </section>
-
-      <aside className="assistant-panel">
-        <h2>Assistant</h2>
-        <p className="context-status">
-          {readerContext
-            ? `Context: ${readerContext.paper.title} - ${readerContext.document.parse_status}`
-            : "Context: none"}
-        </p>
-
-        <section className="assistant-section" aria-labelledby="selection-heading">
-          <h3 id="selection-heading">Selection</h3>
-          {selectedText ? (
-            <div className="selection-block">
-              <strong>Selected text</strong>
-              <p>{selectedText}</p>
-              <span>Page {selectedPageNumber}</span>
-            </div>
-          ) : (
-            <p className="empty">No selection.</p>
-          )}
-          <div className="selection-actions">
-            <button
-              type="button"
-              disabled={!selectionReady || selectionBusy}
-              onClick={() => handleSelectionAction("translate")}
-            >
-              Translate selection
-            </button>
-            <button
-              type="button"
-              disabled={!selectionReady || selectionBusy}
-              onClick={() => handleSelectionAction("explain")}
-            >
-              Explain selection
-            </button>
-            <button
-              type="button"
-              disabled={!selectionReady || selectionBusy}
-              onClick={handleHighlightSelection}
-            >
-              Highlight selection
-            </button>
-            <button
-              type="button"
-              disabled={!selectionReady || selectionBusy}
-              onClick={handleSaveSelectionAsNote}
-            >
-              Save selection as note
-            </button>
-          </div>
-        </section>
-
-        <section className="assistant-section" aria-labelledby="provider-heading">
-          <h3 id="provider-heading">Model settings</h3>
-          <p className="context-status">Provider: {providerSettings?.provider ?? "loading"}</p>
-          <p className="context-status">
-            {providerSettings?.api_key_configured ? "API key configured" : "API key not configured"}
-          </p>
-          <form className="settings-form" onSubmit={handleSaveSettings}>
-            <label htmlFor="provider">Provider</label>
-            <select
-              id="provider"
-              value={provider}
-              onChange={(event) => setProvider(event.target.value)}
-            >
-              <option value="none">None</option>
-              <option value="openai_compatible">OpenAI-compatible</option>
-              <option value="ollama">Ollama</option>
-            </select>
-
-            <label htmlFor="base-url">Base URL</label>
-            <input
-              id="base-url"
-              value={baseUrl}
-              onChange={(event) => setBaseUrl(event.target.value)}
-              placeholder="https://api.example.com/v1"
-            />
-
-            <label htmlFor="model">Model</label>
-            <input
-              id="model"
-              value={model}
-              onChange={(event) => setModel(event.target.value)}
-              placeholder="gpt-4.1-mini"
-            />
-
-            <label htmlFor="proxy-url">Proxy URL</label>
-            <input
-              id="proxy-url"
-              value={proxyUrl}
-              onChange={(event) => setProxyUrl(event.target.value)}
-              placeholder="http://127.0.0.1:7897"
-            />
-
-            <label htmlFor="api-key">API key</label>
-            <input
-              id="api-key"
-              value={apiKey}
-              onChange={(event) => setApiKey(event.target.value)}
-              placeholder="Stored locally"
-              type="password"
-            />
-
-            <label htmlFor="outbound-policy">Outbound policy</label>
-            <select
-              id="outbound-policy"
-              value={outboundContextPolicy}
-              onChange={(event) => setOutboundContextPolicy(event.target.value)}
-            >
-              <option value="snippets_only">Snippets only</option>
-              <option value="local_only">Local only</option>
-            </select>
-
-            <button type="submit">Save settings</button>
-          </form>
-        </section>
-
-        <section className="assistant-section" aria-labelledby="ask-heading">
-          <h3 id="ask-heading">Ask</h3>
-          <form className="settings-form" onSubmit={handleAsk}>
-            <label htmlFor="question">Question</label>
-            <textarea
-              id="question"
-              value={question}
-              onChange={(event) => setQuestion(event.target.value)}
-              rows={4}
-            />
-            <button type="submit" disabled={!readerContext || question.trim().length === 0}>
-              Ask
-            </button>
-          </form>
-          {assistantProgress ? <p className="context-status">{assistantProgress}</p> : null}
-
-          {assistantAnswer ? (
-            <article className="answer-block">
-              <p>{assistantAnswer.answer}</p>
-              <div className="answer-actions">
-                <button type="button" onClick={handleSaveAnswerAsNote}>
-                  Save answer as note
-                </button>
-              </div>
-              <div className="citation-list">
-                {assistantAnswer.citations.map((citation) => (
-                  <button
-                    aria-label={`Open citation page ${citation.page_number}`}
-                    className="citation"
-                    key={`${citation.chunk_id ?? "selection"}-${citation.page_number}-${citation.source_span}`}
-                    onClick={() => openReaderPage(citation.page_number)}
-                    type="button"
-                  >
-                    <strong>Citation Page {citation.page_number}</strong>
-                    <p>{citation.snippet}</p>
-                  </button>
-                ))}
-              </div>
-            </article>
-          ) : null}
-        </section>
-
-        <section className="assistant-section" aria-labelledby="paper-notes-heading">
-          <h3 id="paper-notes-heading">Paper notes</h3>
-          <div className="note-list">
-            {notes.length === 0 ? (
-              <p className="empty">No notes.</p>
-            ) : (
-              notes.map((note) => (
-                <article className="note-item" key={note.id}>
-                  <strong>
-                    Note{note.page_number === null ? "" : ` Page ${note.page_number}`}
-                  </strong>
-                  <p>{note.body}</p>
-                  {note.selected_text ? <span>{note.selected_text}</span> : null}
-                </article>
-              ))
-            )}
-          </div>
-          <div className="note-list">
-            {highlights.length === 0 ? (
-              <p className="empty">No highlights.</p>
-            ) : (
-              highlights.map((highlight) => (
-                <article className="note-item highlight-item" key={highlight.id}>
-                  <strong>Highlight Page {highlight.page_number}</strong>
-                  <p>{highlight.selected_text}</p>
-                </article>
-              ))
-            )}
-          </div>
-        </section>
-      </aside>
+      {message ? <p className="toast-status">{message}</p> : null}
     </main>
   );
 }

@@ -191,6 +191,42 @@ describe("App", () => {
     expect(await screen.findByText("Provider: none")).toBeInTheDocument();
   });
 
+  it("shows a reader-centered shell and hides low-frequency controls by default", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ status: "ok", service: "knowledge-agent-backend" }))
+      .mockResolvedValueOnce(jsonResponse(defaultLibraryStatus))
+      .mockResolvedValueOnce(jsonResponse({ papers: [] }))
+      .mockResolvedValueOnce(jsonResponse(defaultProviderSettings))
+      .mockResolvedValueOnce(jsonResponse(emptyJobsResponse));
+
+    render(<App />);
+
+    expect(await screen.findByRole("banner", { name: "Thesis Assistant workspace" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Thesis Assistant" })).toBeInTheDocument();
+    expect(screen.getByText("Backend ok")).toBeInTheDocument();
+    expect(screen.getByText("0 papers")).toBeInTheDocument();
+    expect(screen.getByRole("searchbox", { name: "Search library or DOI" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Import" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Discover" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Jobs" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
+
+    expect(screen.getByRole("navigation", { name: "Library" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Start your research library" })).toBeInTheDocument();
+    expect(screen.getByText("Import papers or discover literature to begin reading with cited context.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Import papers" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Discover literature" })).toBeInTheDocument();
+    expect(screen.getByText("Configure a model provider to ask questions about the current paper.")).toBeInTheDocument();
+
+    expect(screen.queryByLabelText("PDF source path")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("PDF folder path")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Bibliography source path")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Provider")).not.toBeInTheDocument();
+    expect(screen.queryByText("No recent jobs.")).not.toBeInTheDocument();
+    expect(screen.queryByText("No search hits.")).not.toBeInTheDocument();
+    expect(screen.queryByText("No external results.")).not.toBeInTheDocument();
+  });
+
   it("waits for a backend that is still starting", async () => {
     fetchMock
       .mockRejectedValueOnce(new Error("connection refused"))
