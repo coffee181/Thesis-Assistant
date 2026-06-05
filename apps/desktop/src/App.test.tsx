@@ -1063,6 +1063,47 @@ describe("App", () => {
     expect(await screen.findByText("Highlight Page 2")).toBeInTheDocument();
   });
 
+  it("saves selected text directly as a note", async () => {
+    queueInitialReaderLoad();
+    queueOpenReaderContext();
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        id: 32,
+        paper_id: 1,
+        body: "retrieval augmented generation",
+        page_number: 2,
+        source_span: "page:2:selection",
+        selected_text: "retrieval augmented generation",
+        note_type: "selection",
+        qna_id: null,
+        created_at: "now",
+        updated_at: "now",
+      }),
+    });
+
+    await openReaderPaper();
+    selectReaderText("retrieval augmented generation");
+    await userEvent.click(await screen.findByRole("button", { name: "Save selection as note" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://127.0.0.1:8765/api/notes",
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
+    expect(fetchCallBody("/api/notes")).toMatchObject({
+      paper_id: 1,
+      body: "retrieval augmented generation",
+      page_number: 2,
+      source_span: "page:2:selection",
+      selected_text: "retrieval augmented generation",
+      note_type: "selection",
+      qna_id: null,
+    });
+    expect(await screen.findByText("Note Page 2")).toBeInTheDocument();
+  });
+
   it("saves a selected assistant answer as a note", async () => {
     queueInitialReaderLoad(configuredProviderSettings);
     queueOpenReaderContext();

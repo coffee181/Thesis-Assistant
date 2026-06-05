@@ -364,6 +364,29 @@ export default function App() {
     }
   }
 
+  async function handleSaveSelectionAsNote() {
+    if (!readerContext || !selectedText.trim() || selectedPageNumber === null) return;
+    setMessage("");
+    setSelectionBusy(true);
+    try {
+      const note = await createNote({
+        paper_id: readerContext.paper.id,
+        body: selectedText,
+        page_number: selectedPageNumber,
+        source_span: selectedSourceSpan,
+        selected_text: selectedText,
+        note_type: "selection",
+        qna_id: null,
+      });
+      setNotes((current) => [note, ...current]);
+      setMessage("Selection note saved");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Selection note save failed");
+    } finally {
+      setSelectionBusy(false);
+    }
+  }
+
   async function handleSaveAnswerAsNote() {
     if (!readerContext || !assistantAnswer) return;
     const citation = assistantAnswer.citations[0];
@@ -670,6 +693,13 @@ export default function App() {
               onClick={handleHighlightSelection}
             >
               Highlight selection
+            </button>
+            <button
+              type="button"
+              disabled={!selectionReady || selectionBusy}
+              onClick={handleSaveSelectionAsNote}
+            >
+              Save selection as note
             </button>
           </div>
         </section>
