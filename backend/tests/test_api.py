@@ -1,4 +1,5 @@
 from contextlib import contextmanager
+import json
 from pathlib import Path
 from urllib.parse import quote
 
@@ -43,6 +44,21 @@ class FakeDiscoveryClient:
     def search(self, query: str, limit: int = 10) -> list[DiscoveryCandidate]:
         self.queries.append(query)
         return self.candidates[:limit]
+
+
+def _parse_sse_events(body: str) -> list[tuple[str, dict[str, object]]]:
+    events: list[tuple[str, dict[str, object]]] = []
+    for block in body.strip().split("\n\n"):
+        event_name = ""
+        data_lines: list[str] = []
+        for line in block.splitlines():
+            if line.startswith("event:"):
+                event_name = line.removeprefix("event:").strip()
+            elif line.startswith("data:"):
+                data_lines.append(line.removeprefix("data:").strip())
+        if event_name and data_lines:
+            events.append((event_name, json.loads("\n".join(data_lines))))
+    return events
 
 
 def test_backend_allows_localhost_desktop_cors(tmp_path: Path):
@@ -947,6 +963,152 @@ def test_ask_current_paper_reports_provider_call_failure(tmp_path: Path, write_p
 
     assert response.status_code == 502
     assert response.json()["detail"] == "OpenAI-compatible provider returned non-JSON response"
+
+
+def test_ask_current_paper_stream_returns_started_context_and_final_events(
+    tmp_path: Path,
+    write_pdf,
+):
+    source = write_pdf(
+        tmp_path / "Stream Askable Paper.pdf",
+        [
+            "The introduction gives background.",
+            "The method uses retrieval augmented generation with page citations.",
+        ],
+    )
+    library_dir = tmp_path / "library"
+    chat_provider = ApiRecordingChatProvider(
+        "It uses retrieval augmented generation and preserves page citations.",
+    )
+    client = TestClient(create_app(library_dir=library_dir, chat_provider=chat_provider))
+    import_response = client.post("/api/imports/pdf", json={"source_path": str(source)})
+    paper_id = import_response.json()["paper"]["id"]
+    client.put(
+        "/api/settings/provider",
+        json={
+            "provider": "openai_compatible",
+            "base_url": "https://api.example.test/v1",
+            "model": "research-model",
+            "api_key": "secret-key",
+            "outbound_context_policy": "snippets_only",
+        },
+    )
+
+    with client.stream(
+        "POST",
+        f"/api/papers/{paper_id}/assistant/ask/stream",
+        json={"question": "What method uses retrieval citations?"},
+    ) as response:
+        body = "".join(response.iter_text())
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    events = _parse_sse_events(body)
+    assert [event_name for event_name, _ in events] == ["started", "context", "final"]
+    assert events[0][1] == {"paper_id": paper_id}
+    assert events[1][1] == {"citation_count": 1}
+    assert events[2][1]["answer"] == (
+        "It uses retrieval augmented generation and preserves page citations."
+    )
+    assert events[2][1]["mode"] == "strict"
+    assert events[2][1]["provider"] == "openai_compatible"
+    citations = events[2][1]["citations"]
+    assert isinstance(citations, list)
+    assert len(citations) == 1
+    assert citations[0]["paper_id"] == paper_id
+    assert citations[0]["page_number"] == 2
+    assert "retrieval augmented generation" in citations[0]["snippet"]
+
+
+def test_ask_current_paper_stream_returns_error_event_for_provider_failure(
+    tmp_path: Path,
+    write_pdf,
+):
+    source = write_pdf(
+        tmp_path / "Stream Provider Failure Paper.pdf",
+        ["The method uses retrieval augmented generation."],
+    )
+    library_dir = tmp_path / "library"
+    client = TestClient(
+        create_app(library_dir=library_dir, chat_provider=ApiFailingChatProvider()),
+        raise_server_exceptions=False,
+    )
+    import_response = client.post("/api/imports/pdf", json={"source_path": str(source)})
+    paper_id = import_response.json()["paper"]["id"]
+    client.put(
+        "/api/settings/provider",
+        json={
+            "provider": "openai_compatible",
+            "base_url": "https://api.example.test/v1",
+            "model": "research-model",
+            "api_key": "secret-key",
+            "outbound_context_policy": "snippets_only",
+        },
+    )
+
+    with client.stream(
+        "POST",
+        f"/api/papers/{paper_id}/assistant/ask/stream",
+        json={"question": "What method is used?"},
+    ) as response:
+        body = "".join(response.iter_text())
+
+    assert response.status_code == 200
+    events = _parse_sse_events(body)
+    assert [event_name for event_name, _ in events] == ["started", "error"]
+    assert events[0][1] == {"paper_id": paper_id}
+    assert events[1][1] == {
+        "status": 502,
+        "detail": "OpenAI-compatible provider returned non-JSON response",
+    }
+
+
+def test_ask_current_paper_stream_returns_error_event_for_missing_provider_settings(
+    tmp_path: Path,
+    write_pdf,
+):
+    source = write_pdf(
+        tmp_path / "Stream Unconfigured Paper.pdf",
+        ["The method uses retrieval augmented generation."],
+    )
+    library_dir = tmp_path / "library"
+    client = TestClient(create_app(library_dir=library_dir))
+    import_response = client.post("/api/imports/pdf", json={"source_path": str(source)})
+    paper_id = import_response.json()["paper"]["id"]
+
+    with client.stream(
+        "POST",
+        f"/api/papers/{paper_id}/assistant/ask/stream",
+        json={"question": "What method is used?"},
+    ) as response:
+        body = "".join(response.iter_text())
+
+    assert response.status_code == 200
+    events = _parse_sse_events(body)
+    assert [event_name for event_name, _ in events] == ["started", "error"]
+    assert events[0][1] == {"paper_id": paper_id}
+    assert events[1][1] == {
+        "status": 400,
+        "detail": "model provider not configured",
+    }
+
+
+def test_ask_current_paper_stream_returns_error_event_for_missing_paper(tmp_path: Path):
+    library_dir = tmp_path / "library"
+    client = TestClient(create_app(library_dir=library_dir))
+
+    with client.stream(
+        "POST",
+        "/api/papers/999/assistant/ask/stream",
+        json={"question": "What is this paper about?"},
+    ) as response:
+        body = "".join(response.iter_text())
+
+    assert response.status_code == 200
+    events = _parse_sse_events(body)
+    assert [event_name for event_name, _ in events] == ["started", "error"]
+    assert events[0][1] == {"paper_id": 999}
+    assert events[1][1] == {"status": 404, "detail": "paper not found"}
 
 
 def test_ask_selected_text_returns_selection_citation(tmp_path: Path, write_pdf):

@@ -142,6 +142,24 @@ function jsonResponse(payload: unknown) {
   };
 }
 
+function streamResponse(chunks: string[], delayMs = 0) {
+  return {
+    ok: true,
+    body: new ReadableStream<Uint8Array>({
+      async start(controller) {
+        const encoder = new TextEncoder();
+        for (const chunk of chunks) {
+          controller.enqueue(encoder.encode(chunk));
+          if (delayMs > 0) {
+            await new Promise((resolve) => window.setTimeout(resolve, delayMs));
+          }
+        }
+        controller.close();
+      },
+    }),
+  };
+}
+
 describe("App", () => {
   it("loads backend status and papers", async () => {
     fetchMock
@@ -1635,25 +1653,11 @@ describe("App", () => {
   it("opens a cited page from an assistant citation", async () => {
     queueInitialReaderLoad(configuredProviderSettings);
     queueOpenReaderContext();
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        answer: "The method uses retrieval augmented generation.",
-        mode: "strict",
-        provider: "openai_compatible",
-        qna_id: 11,
-        citations: [
-          {
-            chunk_id: 5,
-            paper_id: 1,
-            title: "Reader Paper",
-            page_number: 2,
-            snippet: "The cited snippet says retrieval augmented generation.",
-            source_span: "page:2:chars:0-47",
-          },
-        ],
-      }),
-    });
+    fetchMock.mockImplementationOnce(async () =>
+      streamResponse([
+        'event: final\ndata: {"answer":"The method uses retrieval augmented generation.","citations":[{"chunk_id":5,"paper_id":1,"title":"Reader Paper","page_number":2,"snippet":"The cited snippet says retrieval augmented generation.","source_span":"page:2:chars:0-47"}],"mode":"strict","provider":"openai_compatible","qna_id":11}\n\n',
+      ]),
+    );
 
     await openReaderPaper();
     await userEvent.type(await screen.findByLabelText("Question"), "What method is used?");
@@ -1667,7 +1671,33 @@ describe("App", () => {
     expect(screen.getByLabelText("Reader page 2")).toHaveAttribute("aria-current", "page");
   });
 
-  it("asks a current-paper question and displays cited snippets", async () => {
+  it("streams current-paper ask progress before displaying the final answer", async () => {
+    queueInitialReaderLoad(configuredProviderSettings);
+    queueOpenReaderContext();
+    fetchMock.mockImplementationOnce(async () =>
+      streamResponse([
+        'event: started\ndata: {"paper_id":1}\n\n',
+        'event: context\ndata: {"citation_count":1}\n\n',
+        'event: final\ndata: {"answer":"Streamed answer","citations":[{"chunk_id":5,"paper_id":1,"title":"Reader Paper","page_number":2,"snippet":"The cited snippet says retrieval augmented generation.","source_span":"page:2:chars:0-47"}],"mode":"strict","provider":"openai_compatible","qna_id":11}\n\n',
+      ], 25),
+    );
+
+    await openReaderPaper();
+    await userEvent.type(await screen.findByLabelText("Question"), "What method is used?");
+    await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://127.0.0.1:8765/api/papers/1/assistant/ask/stream",
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
+    expect(await screen.findByText("Gathering cited context...")).toBeInTheDocument();
+    expect(await screen.findByText("Streamed answer")).toBeInTheDocument();
+    expect(await screen.findByText("Citation Page 2")).toBeInTheDocument();
+  });
+
+  it("falls back to sync current-paper ask when streaming fails", async () => {
     fetchMock
       .mockResolvedValueOnce({
         ok: true,
@@ -1720,9 +1750,13 @@ describe("App", () => {
         json: async () => ({ highlights: [] }),
       })
       .mockResolvedValueOnce({
+        ok: false,
+        json: async () => ({ detail: "Stream unavailable" }),
+      })
+      .mockResolvedValueOnce({
         ok: true,
         json: async () => ({
-          answer: "该方法使用检索增强生成。",
+          answer: "Fallback answer",
           mode: "strict",
           provider: "openai_compatible",
           qna_id: 11,
@@ -1746,11 +1780,17 @@ describe("App", () => {
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
+        "http://127.0.0.1:8765/api/papers/1/assistant/ask/stream",
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
         "http://127.0.0.1:8765/api/papers/1/assistant/ask",
         expect.objectContaining({ method: "POST" }),
       );
     });
-    expect(await screen.findByText("该方法使用检索增强生成。")).toBeInTheDocument();
+    expect(await screen.findByText("Fallback answer")).toBeInTheDocument();
     expect(await screen.findByText("Citation Page 2")).toBeInTheDocument();
     expect(await screen.findByText("The cited snippet says retrieval augmented generation.")).toBeInTheDocument();
   });

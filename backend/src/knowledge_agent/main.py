@@ -4,7 +4,7 @@ from typing import Callable
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 import httpx
 
 from knowledge_agent.assistant import (
@@ -70,6 +70,7 @@ from knowledge_agent.schemas import (
     SetFavoriteRequest,
     SelectedTextAssistantRequest,
 )
+from knowledge_agent.streaming import sse_event
 from knowledge_agent.vector_index import LocalVectorIndex
 
 
@@ -325,6 +326,44 @@ def create_app(
             provider=answer.provider,
             qna_id=answer.qna_id,
         )
+
+    @app.post("/api/papers/{paper_id}/assistant/ask/stream")
+    def ask_current_paper_stream(
+        paper_id: int,
+        request: AskPaperQuestionRequest,
+    ) -> StreamingResponse:
+        def events():
+            yield sse_event("started", {"paper_id": paper_id})
+            try:
+                with connect(config.database_path) as conn:
+                    answer = answer_current_paper_question(
+                        conn=conn,
+                        paper_id=paper_id,
+                        question=request.question,
+                        chat_provider=resolved_chat_provider,
+                    )
+                yield sse_event(
+                    "context",
+                    {"citation_count": len(answer.citations)},
+                )
+                yield sse_event("final", _ask_answer_payload(answer))
+            except KeyError:
+                yield sse_event(
+                    "error",
+                    {"status": 404, "detail": "paper not found"},
+                )
+            except ProviderConfigurationError as exc:
+                yield sse_event(
+                    "error",
+                    {"status": 400, "detail": str(exc)},
+                )
+            except ProviderCallError as exc:
+                yield sse_event(
+                    "error",
+                    {"status": status.HTTP_502_BAD_GATEWAY, "detail": str(exc)},
+                )
+
+        return StreamingResponse(events(), media_type="text/event-stream")
 
     @app.post(
         "/api/papers/{paper_id}/assistant/selection",
@@ -680,6 +719,16 @@ def _run_folder_import_job_background(
 ) -> None:
     with connect(database_path) as conn:
         run_folder_import_job(conn, library_dir, job_id, source_dir)
+
+
+def _ask_answer_payload(answer) -> dict[str, object]:
+    return {
+        "answer": answer.answer,
+        "citations": [citation.to_dict() for citation in answer.citations],
+        "mode": answer.mode,
+        "provider": answer.provider,
+        "qna_id": answer.qna_id,
+    }
 
 
 def _library_response(config: AppConfig) -> LibraryResponse:

@@ -4,6 +4,8 @@ import {
   addPaperTag,
   AskPaperQuestionResponse,
   askPaperQuestion,
+  askPaperQuestionStream,
+  AssistantStreamEvent,
   askSelectedText,
   createHighlight,
   createNote,
@@ -68,6 +70,7 @@ export default function App() {
   const [outboundContextPolicy, setOutboundContextPolicy] = useState("snippets_only");
   const [question, setQuestion] = useState("");
   const [assistantAnswer, setAssistantAnswer] = useState<AskPaperQuestionResponse | null>(null);
+  const [assistantProgress, setAssistantProgress] = useState("");
   const [selectedText, setSelectedText] = useState("");
   const [selectedPageNumber, setSelectedPageNumber] = useState<number | null>(null);
   const [selectedSourceSpan, setSelectedSourceSpan] = useState("");
@@ -150,6 +153,7 @@ export default function App() {
       setNotes([]);
       setHighlights([]);
       setAssistantAnswer(null);
+      setAssistantProgress("");
       setPendingDownloads({});
       setSearchHits([]);
       setExternalResults([]);
@@ -358,6 +362,7 @@ export default function App() {
     setNotes([]);
     setHighlights([]);
     setAssistantAnswer(null);
+    setAssistantProgress("");
     setActiveReaderPage(null);
     try {
       const [context, notesResponse, highlightsResponse] = await Promise.all([
@@ -397,11 +402,34 @@ export default function App() {
     event.preventDefault();
     if (!readerContext) return;
     setMessage("");
+    setAssistantAnswer(null);
+    setAssistantProgress("Starting assistant...");
     try {
-      const response = await askPaperQuestion(readerContext.paper.id, question);
+      const response = await askPaperQuestionStream(
+        readerContext.paper.id,
+        question,
+        handleAssistantStreamEvent,
+      );
       setAssistantAnswer(response);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Ask failed");
+      try {
+        const response = await askPaperQuestion(readerContext.paper.id, question);
+        setAssistantAnswer(response);
+      } catch (fallbackError) {
+        setMessage(fallbackError instanceof Error ? fallbackError.message : "Ask failed");
+      }
+    } finally {
+      setAssistantProgress("");
+    }
+  }
+
+  function handleAssistantStreamEvent(streamEvent: AssistantStreamEvent) {
+    if (streamEvent.event === "started") {
+      setAssistantProgress("Starting assistant...");
+    } else if (streamEvent.event === "context") {
+      setAssistantProgress("Gathering cited context...");
+    } else if (streamEvent.event === "final") {
+      setAssistantAnswer(streamEvent.data);
     }
   }
 
@@ -1014,6 +1042,7 @@ export default function App() {
               Ask
             </button>
           </form>
+          {assistantProgress ? <p className="context-status">{assistantProgress}</p> : null}
 
           {assistantAnswer ? (
             <article className="answer-block">

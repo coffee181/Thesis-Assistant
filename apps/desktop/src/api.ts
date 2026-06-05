@@ -169,6 +169,12 @@ export type AskPaperQuestionResponse = {
   qna_id: number | null;
 };
 
+export type AssistantStreamEvent =
+  | { event: "started"; data: { paper_id: number } }
+  | { event: "context"; data: { citation_count: number } }
+  | { event: "final"; data: AskPaperQuestionResponse }
+  | { event: "error"; data: { status: number; detail: string } };
+
 export type Note = {
   id: number;
   paper_id: number;
@@ -485,6 +491,96 @@ export async function askPaperQuestion(
     throw new Error(payload.detail ?? "Ask failed");
   }
   return response.json();
+}
+
+export async function askPaperQuestionStream(
+  paperId: number,
+  question: string,
+  onEvent: (event: AssistantStreamEvent) => void,
+): Promise<AskPaperQuestionResponse> {
+  const response = await fetch(`${API_BASE}/api/papers/${paperId}/assistant/ask/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question }),
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({ detail: "Ask stream failed" }));
+    throw new Error(payload.detail ?? "Ask stream failed");
+  }
+  if (!response.body) throw new Error("Ask stream response did not include a body");
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let finalAnswer: AskPaperQuestionResponse | null = null;
+
+  while (true) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done });
+    const boundary = nextSseBoundary(buffer);
+    if (boundary === -1 && !done) continue;
+
+    while (true) {
+      const blockBoundary = nextSseBoundary(buffer);
+      if (blockBoundary === -1) break;
+      const block = buffer.slice(0, blockBoundary);
+      buffer = buffer.slice(blockBoundary + sseBoundaryLength(buffer, blockBoundary));
+      const event = parseAssistantStreamEvent(block);
+      if (!event) continue;
+      onEvent(event);
+      if (event.event === "error") throw new Error(event.data.detail);
+      if (event.event === "final") finalAnswer = event.data;
+    }
+
+    if (done) break;
+  }
+
+  const trailingEvent = parseAssistantStreamEvent(buffer);
+  if (trailingEvent) {
+    onEvent(trailingEvent);
+    if (trailingEvent.event === "error") throw new Error(trailingEvent.data.detail);
+    if (trailingEvent.event === "final") finalAnswer = trailingEvent.data;
+  }
+
+  if (!finalAnswer) throw new Error("Ask stream ended before a final answer");
+  return finalAnswer;
+}
+
+function nextSseBoundary(buffer: string): number {
+  const crlf = buffer.indexOf("\r\n\r\n");
+  const lf = buffer.indexOf("\n\n");
+  if (crlf === -1) return lf;
+  if (lf === -1) return crlf;
+  return Math.min(crlf, lf);
+}
+
+function sseBoundaryLength(buffer: string, index: number): number {
+  return buffer.slice(index, index + 4) === "\r\n\r\n" ? 4 : 2;
+}
+
+function parseAssistantStreamEvent(block: string): AssistantStreamEvent | null {
+  const lines = block.split(/\r?\n/);
+  let eventName = "";
+  const dataLines: string[] = [];
+  for (const line of lines) {
+    if (line.startsWith("event:")) {
+      eventName = line.slice("event:".length).trim();
+    } else if (line.startsWith("data:")) {
+      dataLines.push(line.slice("data:".length).trimStart());
+    }
+  }
+  if (!eventName || dataLines.length === 0) return null;
+
+  const data = JSON.parse(dataLines.join("\n")) as unknown;
+  if (eventName === "started") return { event: "started", data: data as { paper_id: number } };
+  if (eventName === "context") {
+    return { event: "context", data: data as { citation_count: number } };
+  }
+  if (eventName === "final") return { event: "final", data: data as AskPaperQuestionResponse };
+  if (eventName === "error") {
+    return { event: "error", data: data as { status: number; detail: string } };
+  }
+  return null;
 }
 
 export async function askSelectedText(

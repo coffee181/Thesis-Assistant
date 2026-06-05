@@ -19,6 +19,7 @@ This repository currently implements the local research assistant MVP slice:
 - Persistent local vector index under `indexes/vectors/` for semantic local search fallback.
 - Managed PDF preview with extracted text reader context.
 - Current-paper assistant Q&A with page citations.
+- Streaming assistant Q&A endpoint and desktop progress updates for current-paper questions.
 - Selected-text translation, explanation, and summarization.
 - Notes and highlights for selected passages.
 - OpenAI-compatible and Ollama provider settings, including optional provider proxy URL.
