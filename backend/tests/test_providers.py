@@ -57,6 +57,31 @@ class NonJsonHttpClient:
         return NonJsonResponse()
 
 
+class RecordingHttpClientFactory:
+    def __init__(self, response_payload: dict):
+        self.response_payload = response_payload
+        self.calls: list[dict[str, object]] = []
+        self.clients: list[RecordingHttpClient] = []
+
+    def __call__(self, **kwargs):
+        self.calls.append(kwargs)
+        client = RecordingContextHttpClient(self.response_payload)
+        self.clients.append(client)
+        return client
+
+
+class RecordingContextHttpClient(RecordingHttpClient):
+    def __init__(self, response_payload: dict):
+        super().__init__(response_payload)
+        self.closed = False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        self.closed = True
+
+
 def test_openai_compatible_provider_routes_chat_completion():
     http_client = RecordingHttpClient(
         {"choices": [{"message": {"content": "Grounded answer"}}]}
@@ -82,6 +107,30 @@ def test_openai_compatible_provider_routes_chat_completion():
         "messages": [{"role": "user", "content": "Question"}],
         "temperature": 0.2,
     }
+
+
+def test_openai_compatible_provider_uses_configured_proxy_for_real_clients():
+    factory = RecordingHttpClientFactory(
+        {"choices": [{"message": {"content": "Proxied answer"}}]}
+    )
+    provider = HttpChatProvider(http_client_factory=factory)
+
+    answer = provider.complete(
+        ProviderSettings(
+            provider="openai_compatible",
+            base_url="https://api.example.test/v1",
+            model="research-model",
+            api_key="secret",
+            outbound_context_policy="snippets_only",
+            proxy_url="http://127.0.0.1:7897",
+        ),
+        [ProviderMessage(role="user", content="Question")],
+    )
+
+    assert answer == "Proxied answer"
+    assert factory.calls[0]["proxy"] == "http://127.0.0.1:7897"
+    assert factory.clients[0].requests[0]["url"] == "https://api.example.test/v1/chat/completions"
+    assert factory.clients[0].closed is True
 
 
 def test_openai_compatible_provider_reports_non_json_response():

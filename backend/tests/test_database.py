@@ -376,19 +376,23 @@ def test_provider_settings_default_and_roundtrip(tmp_path: Path):
                 model="research-model",
                 api_key="secret-key",
                 outbound_context_policy="snippets_only",
+                proxy_url="http://127.0.0.1:7897",
             )
         )
         reloaded_settings = settings.get_provider_settings()
 
     assert default_settings.provider == "none"
     assert default_settings.outbound_context_policy == "snippets_only"
+    assert default_settings.proxy_url is None
     assert default_settings.to_public().api_key_configured is False
     assert saved_settings.to_public().api_key_configured is True
     assert saved_settings.to_public().api_key is None
+    assert saved_settings.proxy_url == "http://127.0.0.1:7897"
     assert reloaded_settings.provider == "openai_compatible"
     assert reloaded_settings.base_url == "https://api.example.test/v1"
     assert reloaded_settings.model == "research-model"
     assert reloaded_settings.api_key == "secret-key"
+    assert reloaded_settings.proxy_url == "http://127.0.0.1:7897"
 
 
 def test_qna_entry_roundtrip(tmp_path: Path):

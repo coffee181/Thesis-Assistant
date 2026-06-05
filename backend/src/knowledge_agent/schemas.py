@@ -224,6 +224,7 @@ class ProviderSettingsRequest(BaseModel):
         default="snippets_only",
         pattern="^(snippets_only|local_only)$",
     )
+    proxy_url: str | None = None
 
 
 class ProviderSettingsResponse(BaseModel):
@@ -233,6 +234,7 @@ class ProviderSettingsResponse(BaseModel):
     base_url: str | None
     model: str | None
     outbound_context_policy: str
+    proxy_url: str | None
     api_key_configured: bool
 
 

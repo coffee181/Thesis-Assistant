@@ -26,9 +26,15 @@ class ChatProvider(Protocol):
 
 
 class HttpChatProvider:
-    def __init__(self, http_client: object | None = None, timeout: float = 60.0) -> None:
-        self._http_client = http_client or httpx.Client()
+    def __init__(
+        self,
+        http_client: object | None = None,
+        timeout: float = 60.0,
+        http_client_factory=None,
+    ) -> None:
+        self._http_client = http_client
         self._timeout = timeout
+        self._http_client_factory = http_client_factory or httpx.Client
 
     def complete(
         self,
@@ -48,15 +54,15 @@ class HttpChatProvider:
     ) -> str:
         url = f"{_required_base_url(settings).rstrip('/')}/chat/completions"
         headers = _headers(settings)
-        response = self._http_client.post(
+        response = self._post(
+            settings,
             url,
-            json={
+            payload={
                 "model": _required_model(settings),
                 "messages": [_message_payload(message) for message in messages],
                 "temperature": 0.2,
             },
             headers=headers,
-            timeout=self._timeout,
         )
         response.raise_for_status()
         try:
@@ -76,15 +82,15 @@ class HttpChatProvider:
         messages: list[ProviderMessage],
     ) -> str:
         url = f"{_required_base_url(settings).rstrip('/')}/api/chat"
-        response = self._http_client.post(
+        response = self._post(
+            settings,
             url,
-            json={
+            payload={
                 "model": _required_model(settings),
                 "messages": [_message_payload(message) for message in messages],
                 "stream": False,
             },
             headers=_headers(settings),
-            timeout=self._timeout,
         )
         response.raise_for_status()
         try:
@@ -95,6 +101,29 @@ class HttpChatProvider:
             return str(payload["message"]["content"])
         except (KeyError, TypeError) as exc:
             raise ProviderCallError("Ollama response missing content") from exc
+
+    def _post(
+        self,
+        settings: ProviderSettings,
+        url: str,
+        payload: dict,
+        headers: dict[str, str],
+    ):
+        if self._http_client is not None:
+            return self._http_client.post(
+                url,
+                json=payload,
+                headers=headers,
+                timeout=self._timeout,
+            )
+
+        with self._http_client_factory(proxy=settings.proxy_url) as http_client:
+            return http_client.post(
+                url,
+                json=payload,
+                headers=headers,
+                timeout=self._timeout,
+            )
 
 
 def _required_base_url(settings: ProviderSettings) -> str:

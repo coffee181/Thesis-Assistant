@@ -590,17 +590,21 @@ def test_provider_settings_endpoints_hide_api_key(tmp_path: Path):
             "model": "research-model",
             "api_key": "secret-key",
             "outbound_context_policy": "snippets_only",
+            "proxy_url": "http://127.0.0.1:7897",
         },
     )
     reload_response = client.get("/api/settings/provider")
 
     assert default_response.status_code == 200
     assert default_response.json()["provider"] == "none"
+    assert default_response.json()["proxy_url"] is None
     assert default_response.json()["api_key_configured"] is False
     assert save_response.status_code == 200
     assert save_response.json()["api_key_configured"] is True
+    assert save_response.json()["proxy_url"] == "http://127.0.0.1:7897"
     assert "secret-key" not in save_response.text
     assert reload_response.json()["provider"] == "openai_compatible"
+    assert reload_response.json()["proxy_url"] == "http://127.0.0.1:7897"
     assert reload_response.json()["api_key_configured"] is True
     assert "secret-key" not in reload_response.text
 

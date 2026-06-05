@@ -804,6 +804,7 @@ class SettingsRepository:
                 "outbound_context_policy",
                 "snippets_only",
             ),
+            proxy_url=payload.get("proxy_url"),
         )
 
     def save_provider_settings(self, settings: ProviderSettings) -> ProviderSettings:
@@ -814,6 +815,7 @@ class SettingsRepository:
                 "model": settings.model,
                 "api_key": settings.api_key,
                 "outbound_context_policy": settings.outbound_context_policy,
+                "proxy_url": settings.proxy_url,
             },
             ensure_ascii=True,
         )

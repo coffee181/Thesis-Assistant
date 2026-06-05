@@ -138,6 +138,7 @@ class PublicProviderSettings:
     base_url: str | None
     model: str | None
     outbound_context_policy: str
+    proxy_url: str | None
     api_key_configured: bool
     api_key: None = None
 
@@ -149,6 +150,7 @@ class ProviderSettings:
     model: str | None = None
     api_key: str | None = None
     outbound_context_policy: str = "snippets_only"
+    proxy_url: str | None = None
 
     def to_public(self) -> PublicProviderSettings:
         return PublicProviderSettings(
@@ -156,6 +158,7 @@ class ProviderSettings:
             base_url=self.base_url,
             model=self.model,
             outbound_context_policy=self.outbound_context_policy,
+            proxy_url=self.proxy_url,
             api_key_configured=bool(self.api_key),
         )
 

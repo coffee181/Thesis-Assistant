@@ -134,6 +134,7 @@ def create_app(
             model=_blank_to_none(request.model),
             api_key=_blank_to_none(request.api_key),
             outbound_context_policy=request.outbound_context_policy,
+            proxy_url=_blank_to_none(request.proxy_url),
         )
         with connect(config.database_path) as conn:
             saved_settings = SettingsRepository(conn).save_provider_settings(settings)
