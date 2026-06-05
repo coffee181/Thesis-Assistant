@@ -63,6 +63,32 @@ class SearchResultRecord:
 
 
 @dataclass(frozen=True)
+class Note:
+    id: int
+    paper_id: int
+    body: str
+    page_number: int | None
+    source_span: str | None
+    selected_text: str | None
+    note_type: str
+    qna_id: int | None
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class Highlight:
+    id: int
+    paper_id: int
+    page_number: int
+    source_span: str
+    selected_text: str
+    color: str
+    note_id: int | None
+    created_at: str
+
+
+@dataclass(frozen=True)
 class Document:
     id: int
     paper_id: int

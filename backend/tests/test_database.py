@@ -10,6 +10,8 @@ from knowledge_agent.models import (
 from knowledge_agent.repositories import (
     ChunksRepository,
     DocumentsRepository,
+    HighlightsRepository,
+    NotesRepository,
     PapersRepository,
     QnaRepository,
     SearchResultsRepository,
@@ -40,6 +42,8 @@ def test_init_db_creates_tables(tmp_path: Path):
         "settings",
         "qna_entries",
         "search_results",
+        "notes",
+        "highlights",
     }.issubset(table_names)
     assert {
         "authors",
@@ -264,6 +268,52 @@ def test_search_results_repository_updates_duplicate_source_record(tmp_path: Pat
     assert updated[0].authors == "Jane Doe"
     assert updated[0].venue == "Updated Venue"
     assert first_query_results == []
+
+
+def test_notes_and_highlights_roundtrip(tmp_path: Path):
+    db_path = tmp_path / "library.sqlite"
+    with connect(db_path) as conn:
+        init_db(conn)
+        papers = PapersRepository(conn)
+        notes = NotesRepository(conn)
+        highlights = HighlightsRepository(conn)
+        paper = papers.create(title="Readable Paper", year=2026, doi=None)
+        other_paper = papers.create(title="Other Paper", year=2026, doi=None)
+
+        note = notes.create(
+            paper_id=paper.id,
+            body="This answer is worth keeping.",
+            page_number=2,
+            source_span="page:2:selection",
+            selected_text="retrieval augmented generation",
+            note_type="assistant_answer",
+            qna_id=None,
+        )
+        highlight = highlights.create(
+            paper_id=paper.id,
+            page_number=2,
+            source_span="page:2:selection",
+            selected_text="retrieval augmented generation",
+            color="yellow",
+            note_id=note.id,
+        )
+        highlights.create(
+            paper_id=other_paper.id,
+            page_number=1,
+            source_span="page:1:selection",
+            selected_text="other",
+            color="yellow",
+            note_id=None,
+        )
+        paper_notes = notes.list_for_paper(paper.id)
+        paper_highlights = highlights.list_for_paper(paper.id)
+
+    assert note.body == "This answer is worth keeping."
+    assert paper_notes[0].selected_text == "retrieval augmented generation"
+    assert paper_notes[0].note_type == "assistant_answer"
+    assert highlight.note_id == note.id
+    assert len(paper_highlights) == 1
+    assert paper_highlights[0].page_number == 2
 
 
 def test_chunks_replace_list_and_search(tmp_path: Path):

@@ -107,6 +107,36 @@ def init_db(conn: sqlite3.Connection) -> None:
 
         create index if not exists idx_search_results_query
         on search_results(query);
+
+        create table if not exists notes (
+            id integer primary key autoincrement,
+            paper_id integer not null references papers(id) on delete cascade,
+            body text not null,
+            page_number integer,
+            source_span text,
+            selected_text text,
+            note_type text not null default 'manual',
+            qna_id integer references qna_entries(id) on delete set null,
+            created_at text not null default current_timestamp,
+            updated_at text not null default current_timestamp
+        );
+
+        create index if not exists idx_notes_paper_id
+        on notes(paper_id);
+
+        create table if not exists highlights (
+            id integer primary key autoincrement,
+            paper_id integer not null references papers(id) on delete cascade,
+            page_number integer not null,
+            source_span text not null,
+            selected_text text not null,
+            color text not null default 'yellow',
+            note_id integer references notes(id) on delete set null,
+            created_at text not null default current_timestamp
+        );
+
+        create index if not exists idx_highlights_paper_id
+        on highlights(paper_id);
         """
     )
     _ensure_column(

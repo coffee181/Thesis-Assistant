@@ -8,6 +8,8 @@ from knowledge_agent.models import (
     ChunkInput,
     Document,
     DiscoveryCandidate,
+    Highlight,
+    Note,
     Paper,
     ProviderSettings,
     QnaEntry,
@@ -367,6 +369,169 @@ class SearchResultsRepository:
         if row is None:
             raise KeyError(f"search result not found: {result_id}")
         return SearchResultRecord(**dict(row))
+
+
+class NotesRepository:
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def create(
+        self,
+        paper_id: int,
+        body: str,
+        page_number: int | None,
+        source_span: str | None,
+        selected_text: str | None,
+        note_type: str,
+        qna_id: int | None,
+    ) -> Note:
+        cursor = self._conn.execute(
+            """
+            insert into notes (
+                paper_id,
+                body,
+                page_number,
+                source_span,
+                selected_text,
+                note_type,
+                qna_id
+            )
+            values (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                paper_id,
+                body,
+                page_number,
+                source_span,
+                selected_text,
+                note_type,
+                qna_id,
+            ),
+        )
+        return self.get(cursor.lastrowid)
+
+    def get(self, note_id: int) -> Note:
+        row = self._conn.execute(
+            """
+            select
+                id,
+                paper_id,
+                body,
+                page_number,
+                source_span,
+                selected_text,
+                note_type,
+                qna_id,
+                created_at,
+                updated_at
+            from notes
+            where id = ?
+            """,
+            (note_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"note not found: {note_id}")
+        return Note(**dict(row))
+
+    def list_for_paper(self, paper_id: int) -> list[Note]:
+        rows = self._conn.execute(
+            """
+            select
+                id,
+                paper_id,
+                body,
+                page_number,
+                source_span,
+                selected_text,
+                note_type,
+                qna_id,
+                created_at,
+                updated_at
+            from notes
+            where paper_id = ?
+            order by created_at desc, id desc
+            """,
+            (paper_id,),
+        ).fetchall()
+        return [Note(**dict(row)) for row in rows]
+
+
+class HighlightsRepository:
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def create(
+        self,
+        paper_id: int,
+        page_number: int,
+        source_span: str,
+        selected_text: str,
+        color: str,
+        note_id: int | None,
+    ) -> Highlight:
+        cursor = self._conn.execute(
+            """
+            insert into highlights (
+                paper_id,
+                page_number,
+                source_span,
+                selected_text,
+                color,
+                note_id
+            )
+            values (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                paper_id,
+                page_number,
+                source_span,
+                selected_text,
+                color,
+                note_id,
+            ),
+        )
+        return self.get(cursor.lastrowid)
+
+    def get(self, highlight_id: int) -> Highlight:
+        row = self._conn.execute(
+            """
+            select
+                id,
+                paper_id,
+                page_number,
+                source_span,
+                selected_text,
+                color,
+                note_id,
+                created_at
+            from highlights
+            where id = ?
+            """,
+            (highlight_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"highlight not found: {highlight_id}")
+        return Highlight(**dict(row))
+
+    def list_for_paper(self, paper_id: int) -> list[Highlight]:
+        rows = self._conn.execute(
+            """
+            select
+                id,
+                paper_id,
+                page_number,
+                source_span,
+                selected_text,
+                color,
+                note_id,
+                created_at
+            from highlights
+            where paper_id = ?
+            order by page_number asc, id asc
+            """,
+            (paper_id,),
+        ).fetchall()
+        return [Highlight(**dict(row)) for row in rows]
 
 
 class DocumentsRepository:
