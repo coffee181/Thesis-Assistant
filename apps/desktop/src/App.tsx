@@ -3,18 +3,22 @@ import { FormEvent, useEffect, useState } from "react";
 import {
   AskPaperQuestionResponse,
   askPaperQuestion,
+  downloadOpenPdf,
   exportBibliography,
   getHealth,
   getProviderSettings,
   getReaderContext,
   importBibliography,
+  importPendingDownload,
   importPdf,
   listPapers,
   Paper,
   ProviderSettings,
   ReaderContext,
+  SearchResultRecord,
   saveProviderSettings,
   SearchHit,
+  searchExternal,
   searchLocal,
 } from "./api";
 import "./styles.css";
@@ -28,6 +32,9 @@ export default function App() {
   const [exportPreview, setExportPreview] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [searchHits, setSearchHits] = useState<SearchHit[]>([]);
+  const [externalQuery, setExternalQuery] = useState("");
+  const [externalResults, setExternalResults] = useState<SearchResultRecord[]>([]);
+  const [pendingDownloads, setPendingDownloads] = useState<Record<number, string>>({});
   const [readerContext, setReaderContext] = useState<ReaderContext | null>(null);
   const [providerSettings, setProviderSettings] = useState<ProviderSettings | null>(null);
   const [provider, setProvider] = useState("none");
@@ -133,6 +140,56 @@ export default function App() {
     }
   }
 
+  async function handleExternalSearch(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const query = externalQuery.trim();
+    setMessage("");
+    if (!query) {
+      setExternalResults([]);
+      return;
+    }
+
+    try {
+      const response = await searchExternal(query);
+      setExternalResults(response.results);
+      setPendingDownloads({});
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "External search failed");
+    }
+  }
+
+  async function handleDownloadOpenPdf(result: SearchResultRecord) {
+    setMessage("");
+    try {
+      const response = await downloadOpenPdf(result.id);
+      setPendingDownloads((current) => ({
+        ...current,
+        [result.id]: response.pending_path,
+      }));
+      setMessage("Open PDF downloaded");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Download failed");
+    }
+  }
+
+  async function handleConfirmPendingImport(result: SearchResultRecord) {
+    const pendingPath = pendingDownloads[result.id];
+    if (!pendingPath) return;
+    setMessage("");
+    try {
+      await importPendingDownload(result.id, pendingPath);
+      setPendingDownloads((current) => {
+        const next = { ...current };
+        delete next[result.id];
+        return next;
+      });
+      setMessage("Downloaded paper imported");
+      await refreshPapers();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Pending import failed");
+    }
+  }
+
   async function openPaper(paper: Paper) {
     setMessage("");
     try {
@@ -207,6 +264,21 @@ export default function App() {
             />
             <button type="submit" disabled={searchQuery.trim().length === 0}>
               Search
+            </button>
+          </div>
+        </form>
+
+        <form className="panel-form" onSubmit={handleExternalSearch}>
+          <label htmlFor="external-query">External search</label>
+          <div className="form-row">
+            <input
+              id="external-query"
+              value={externalQuery}
+              onChange={(event) => setExternalQuery(event.target.value)}
+              placeholder="keyword, DOI, title, arXiv"
+            />
+            <button type="submit" disabled={externalQuery.trim().length === 0}>
+              Search external
             </button>
           </div>
         </form>
@@ -296,6 +368,39 @@ export default function App() {
                   <span className="page-label">Page {hit.page_number}</span>
                   <span className="snippet">{hit.snippet}</span>
                 </button>
+              ))
+            )}
+          </div>
+        </section>
+
+        <section className="library-section" aria-labelledby="external-heading">
+          <h2 id="external-heading">External discovery</h2>
+          <div className="search-list">
+            {externalResults.length === 0 ? (
+              <p className="empty">No external results.</p>
+            ) : (
+              externalResults.map((result) => (
+                <article className="search-hit discovery-result" key={result.id}>
+                  <span className="paper-title">{result.title}</span>
+                  <span className="paper-meta">{resultMetadata(result)}</span>
+                  <span className="source-label">{result.source}</span>
+                  {result.doi ? <span className="snippet">DOI {result.doi}</span> : null}
+                  {result.arxiv_id ? <span className="snippet">arXiv {result.arxiv_id}</span> : null}
+                  <span className={result.pdf_url ? "availability open" : "availability closed"}>
+                    {result.pdf_url ? "Open PDF available" : "Needs access"}
+                  </span>
+                  <div className="result-actions">
+                    {pendingDownloads[result.id] ? (
+                      <button type="button" onClick={() => handleConfirmPendingImport(result)}>
+                        Confirm import
+                      </button>
+                    ) : result.pdf_url ? (
+                      <button type="button" onClick={() => handleDownloadOpenPdf(result)}>
+                        Download PDF
+                      </button>
+                    ) : null}
+                  </div>
+                </article>
               ))
             )}
           </div>
@@ -431,6 +536,12 @@ function paperMetadata(paper: Paper): string {
   const parts = [paper.authors, paper.year?.toString()].filter(Boolean);
   if (parts.length > 0) return parts.join(" · ");
   return paper.doi ?? "No DOI";
+}
+
+function resultMetadata(result: SearchResultRecord): string {
+  const parts = [result.authors, result.year?.toString()].filter(Boolean);
+  if (parts.length > 0) return parts.join(" · ");
+  return result.venue ?? result.doi ?? "No metadata";
 }
 
 function paperFromSearchHit(hit: SearchHit): Paper {

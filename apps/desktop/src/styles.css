@@ -187,6 +187,10 @@ textarea {
   width: 100%;
 }
 
+.discovery-result {
+  cursor: default;
+}
+
 .page-label {
   color: #475569;
   font-size: 13px;
@@ -197,6 +201,35 @@ textarea {
   color: #475569;
   font-size: 13px;
   line-height: 1.45;
+}
+
+.source-label,
+.availability {
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.availability.open {
+  color: #166534;
+}
+
+.availability.closed {
+  color: #7c2d12;
+}
+
+.result-actions {
+  display: flex;
+}
+
+.result-actions button {
+  background: #1f2937;
+  border: 0;
+  border-radius: 6px;
+  color: #ffffff;
+  cursor: pointer;
+  padding: 8px 10px;
 }
 
 .reader-page {

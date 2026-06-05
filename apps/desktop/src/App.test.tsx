@@ -209,6 +209,234 @@ describe("App", () => {
     );
   });
 
+  it("searches external papers and displays open PDF availability", async () => {
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ status: "ok", service: "knowledge-agent-backend" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ papers: [] }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => defaultProviderSettings,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          query: "local rag",
+          results: [
+            {
+              id: 8,
+              query: "local rag",
+              source: "openalex",
+              external_id: "W123",
+              title: "Local Knowledge Agents",
+              authors: "Jane Doe",
+              year: 2024,
+              doi: "10.1234/local",
+              venue: "Journal of Local Research",
+              abstract: "Traceable assistants.",
+              arxiv_id: null,
+              pdf_url: "https://example.test/local.pdf",
+              landing_url: "https://example.test/local",
+              created_at: "now",
+            },
+          ],
+        }),
+      });
+
+    render(<App />);
+    await userEvent.type(await screen.findByLabelText("External search"), "local rag");
+    await userEvent.click(screen.getByRole("button", { name: "Search external" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://127.0.0.1:8765/api/search/external?q=local%20rag",
+      );
+    });
+    expect(await screen.findByText("Local Knowledge Agents")).toBeInTheDocument();
+    expect(await screen.findByText("Jane Doe · 2024")).toBeInTheDocument();
+    expect(await screen.findByText("openalex")).toBeInTheDocument();
+    expect(await screen.findByText("Open PDF available")).toBeInTheDocument();
+  });
+
+  it("downloads an open PDF result and confirms import into the library", async () => {
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ status: "ok", service: "knowledge-agent-backend" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ papers: [] }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => defaultProviderSettings,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          query: "local rag",
+          results: [
+            {
+              id: 8,
+              query: "local rag",
+              source: "openalex",
+              external_id: "W123",
+              title: "Local Knowledge Agents",
+              authors: "Jane Doe",
+              year: 2024,
+              doi: "10.1234/local",
+              venue: "Journal of Local Research",
+              abstract: "Traceable assistants.",
+              arxiv_id: null,
+              pdf_url: "https://example.test/local.pdf",
+              landing_url: "https://example.test/local",
+              created_at: "now",
+            },
+          ],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          pending_path: "F:\\knowledge-agent-library\\downloads\\pending\\8-local.pdf",
+          result: {
+            id: 8,
+            query: "local rag",
+            source: "openalex",
+            external_id: "W123",
+            title: "Local Knowledge Agents",
+            authors: "Jane Doe",
+            year: 2024,
+            doi: "10.1234/local",
+            venue: "Journal of Local Research",
+            abstract: "Traceable assistants.",
+            arxiv_id: null,
+            pdf_url: "https://example.test/local.pdf",
+            landing_url: "https://example.test/local",
+            created_at: "now",
+          },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          imported: true,
+          paper: {
+            id: 9,
+            title: "Local Knowledge Agents",
+            authors: "Jane Doe",
+            year: 2024,
+            doi: "10.1234/local",
+            venue: "Journal of Local Research",
+            abstract: null,
+            citation_key: null,
+            arxiv_id: null,
+            entry_type: "article",
+            created_at: "now",
+          },
+          document: {
+            id: 12,
+            paper_id: 9,
+            library_path: "papers/2024/local/paper.pdf",
+            file_hash: "hash",
+            page_count: null,
+            parse_status: "failed",
+            parse_error: null,
+            created_at: "now",
+          },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          papers: [
+            {
+              id: 9,
+              title: "Local Knowledge Agents",
+              authors: "Jane Doe",
+              year: 2024,
+              doi: "10.1234/local",
+              venue: "Journal of Local Research",
+              abstract: null,
+              citation_key: null,
+              arxiv_id: null,
+              entry_type: "article",
+              created_at: "now",
+            },
+          ],
+        }),
+      });
+
+    render(<App />);
+    await userEvent.type(await screen.findByLabelText("External search"), "local rag");
+    await userEvent.click(screen.getByRole("button", { name: "Search external" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Download PDF" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Confirm import" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://127.0.0.1:8765/api/imports/pending-download",
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
+    expect(await screen.findByText("Downloaded paper imported")).toBeInTheDocument();
+    expect((await screen.findAllByText("Local Knowledge Agents")).length).toBeGreaterThan(0);
+  });
+
+  it("shows needs access for external results without open PDF URLs", async () => {
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ status: "ok", service: "knowledge-agent-backend" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ papers: [] }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => defaultProviderSettings,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          query: "closed paper",
+          results: [
+            {
+              id: 10,
+              query: "closed paper",
+              source: "openalex",
+              external_id: "W999",
+              title: "Closed Access Paper",
+              authors: null,
+              year: 2023,
+              doi: null,
+              venue: null,
+              abstract: null,
+              arxiv_id: null,
+              pdf_url: null,
+              landing_url: "https://example.test/closed",
+              created_at: "now",
+            },
+          ],
+        }),
+      });
+
+    render(<App />);
+    await userEvent.type(await screen.findByLabelText("External search"), "closed paper");
+    await userEvent.click(screen.getByRole("button", { name: "Search external" }));
+
+    expect(await screen.findByText("Closed Access Paper")).toBeInTheDocument();
+    expect(await screen.findByText("Needs access")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Download PDF" })).not.toBeInTheDocument();
+  });
+
   it("searches the local library and displays page hits", async () => {
     fetchMock
       .mockResolvedValueOnce({

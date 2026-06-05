@@ -62,6 +62,33 @@ export type LocalSearchResponse = {
   hits: SearchHit[];
 };
 
+export type SearchResultRecord = {
+  id: number;
+  query: string;
+  source: string;
+  external_id: string;
+  title: string;
+  authors: string | null;
+  year: number | null;
+  doi: string | null;
+  venue: string | null;
+  abstract: string | null;
+  arxiv_id: string | null;
+  pdf_url: string | null;
+  landing_url: string | null;
+  created_at: string;
+};
+
+export type ExternalSearchResponse = {
+  query: string;
+  results: SearchResultRecord[];
+};
+
+export type OpenPdfDownloadResponse = {
+  pending_path: string;
+  result: SearchResultRecord;
+};
+
 export type ReaderPage = {
   page_number: number;
   text: string;
@@ -156,6 +183,40 @@ export async function searchLocal(query: string): Promise<LocalSearchResponse> {
   const response = await fetch(`${API_BASE}/api/search/local?q=${encodeURIComponent(query)}`);
   if (!response.ok) throw new Error("Could not search library");
   return response.json();
+}
+
+export async function searchExternal(query: string): Promise<ExternalSearchResponse> {
+  const response = await fetch(`${API_BASE}/api/search/external?q=${encodeURIComponent(query)}`);
+  if (!response.ok) throw new Error("Could not search external sources");
+  return response.json();
+}
+
+export async function downloadOpenPdf(searchResultId: number): Promise<OpenPdfDownloadResponse> {
+  const response = await fetch(`${API_BASE}/api/downloads/open-pdf`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ search_result_id: searchResultId }),
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({ detail: "Download failed" }));
+    throw new Error(payload.detail ?? "Download failed");
+  }
+  return response.json();
+}
+
+export async function importPendingDownload(
+  searchResultId: number,
+  pendingPath: string,
+): Promise<void> {
+  const response = await fetch(`${API_BASE}/api/imports/pending-download`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ search_result_id: searchResultId, pending_path: pendingPath }),
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({ detail: "Pending import failed" }));
+    throw new Error(payload.detail ?? "Pending import failed");
+  }
 }
 
 export async function getReaderContext(paperId: number): Promise<ReaderContext> {
