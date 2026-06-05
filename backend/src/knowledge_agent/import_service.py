@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from knowledge_agent.models import Document, Paper
-from knowledge_agent.repositories import DocumentsRepository, PapersRepository
+from knowledge_agent.pdf_text import chunk_pages, extract_pdf_pages
+from knowledge_agent.repositories import ChunksRepository, DocumentsRepository, PapersRepository
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,12 @@ def import_pdf(conn: sqlite3.Connection, library_root: Path, source_path: Path) 
         file_hash=file_hash,
         page_count=None,
     )
+    document = _parse_imported_document(
+        conn=conn,
+        library_root=library_root,
+        paper=paper,
+        document=document,
+    )
     return ImportResult(paper=paper, document=document, imported=True)
 
 
@@ -69,3 +76,33 @@ def _slugify(value: str) -> str:
     lowered = value.lower()
     normalized = re.sub(r"[^a-z0-9]+", "-", lowered)
     return normalized.strip("-")
+
+
+def _parse_imported_document(
+    conn: sqlite3.Connection,
+    library_root: Path,
+    paper: Paper,
+    document: Document,
+) -> Document:
+    documents = DocumentsRepository(conn)
+    try:
+        pages = extract_pdf_pages(library_root / document.library_path)
+        chunks = chunk_pages(pages)
+        ChunksRepository(conn).replace_for_document(
+            document_id=document.id,
+            paper_id=paper.id,
+            chunks=chunks,
+        )
+        return documents.update_parse_result(
+            document_id=document.id,
+            page_count=len(pages),
+            parse_status="parsed",
+            parse_error=None,
+        )
+    except Exception as exc:
+        return documents.update_parse_result(
+            document_id=document.id,
+            page_count=None,
+            parse_status="failed",
+            parse_error=str(exc)[:500],
+        )
