@@ -4,7 +4,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from knowledge_agent import main as main_module
-from knowledge_agent.db import connect as real_connect
+from knowledge_agent.db import connect, connect as real_connect
 from knowledge_agent.main import create_app
 from knowledge_agent.models import DiscoveryCandidate, ProviderSettings
 from knowledge_agent.providers import ProviderMessage
@@ -517,6 +517,54 @@ def test_reader_context_reports_missing_paper(tmp_path: Path):
 
     assert response.status_code == 404
     assert response.json()["detail"] == "paper not found"
+
+
+def test_paper_pdf_endpoint_streams_managed_pdf(tmp_path: Path, write_pdf):
+    source = write_pdf(tmp_path / "Readable Paper.pdf", ["Readable page text."])
+    library_dir = tmp_path / "library"
+    client = TestClient(create_app(library_dir=library_dir))
+    import_response = client.post("/api/imports/pdf", json={"source_path": str(source)})
+    paper_id = import_response.json()["paper"]["id"]
+
+    response = client.get(f"/api/papers/{paper_id}/pdf")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/pdf")
+    assert "readable-paper.pdf" in response.headers["content-disposition"]
+    assert response.content.startswith(b"%PDF")
+
+
+def test_paper_pdf_endpoint_reports_missing_paper(tmp_path: Path):
+    library_dir = tmp_path / "library"
+    client = TestClient(create_app(library_dir=library_dir))
+
+    response = client.get("/api/papers/999/pdf")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "paper not found"
+
+
+def test_paper_pdf_endpoint_rejects_document_path_outside_library(
+    tmp_path: Path,
+    write_pdf,
+):
+    source = write_pdf(tmp_path / "Unsafe Paper.pdf", ["Unsafe page text."])
+    library_dir = tmp_path / "library"
+    client = TestClient(create_app(library_dir=library_dir))
+    import_response = client.post("/api/imports/pdf", json={"source_path": str(source)})
+    paper_id = import_response.json()["paper"]["id"]
+    outside_pdf = tmp_path / "outside.pdf"
+    outside_pdf.write_bytes(source.read_bytes())
+    with connect(library_dir / "database.sqlite") as conn:
+        conn.execute(
+            "update documents set library_path = ? where paper_id = ?",
+            ("../outside.pdf", paper_id),
+        )
+
+    response = client.get(f"/api/papers/{paper_id}/pdf")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "PDF file not found"
 
 
 def test_provider_settings_endpoints_hide_api_key(tmp_path: Path):

@@ -3,6 +3,7 @@ import sqlite3
 from typing import Callable
 
 from fastapi import FastAPI, HTTPException, Query, status
+from fastapi.responses import FileResponse
 import httpx
 
 from knowledge_agent.assistant import (
@@ -180,6 +181,35 @@ def create_app(
             paper=paper,
             document=document,
             pages=_reader_pages_from_chunks(paper_chunks),
+        )
+
+    @app.get("/api/papers/{paper_id}/pdf")
+    def get_paper_pdf(paper_id: int) -> FileResponse:
+        active_config = config
+        with connect(active_config.database_path) as conn:
+            papers = PapersRepository(conn)
+            documents = DocumentsRepository(conn)
+            try:
+                paper = papers.get(paper_id)
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail="paper not found") from exc
+
+            document = documents.find_by_paper_id(paper_id)
+            if document is None:
+                raise HTTPException(status_code=404, detail="document not found")
+
+        pdf_path = _managed_document_path(
+            active_config.library_dir,
+            document.library_path,
+        )
+        if pdf_path is None or not pdf_path.exists() or not pdf_path.is_file():
+            raise HTTPException(status_code=404, detail="PDF file not found")
+
+        filename = f"{_slugify(paper.title) or 'paper'}.pdf"
+        return FileResponse(
+            pdf_path,
+            media_type="application/pdf",
+            filename=filename,
         )
 
     @app.post(
@@ -520,6 +550,14 @@ def _library_response(config: AppConfig) -> LibraryResponse:
         database_path=str(config.database_path),
         paper_count=paper_count,
     )
+
+
+def _managed_document_path(library_dir: Path, library_path: str) -> Path | None:
+    library_root = library_dir.resolve()
+    candidate = (library_root / library_path).resolve()
+    if candidate == library_root or library_root not in candidate.parents:
+        return None
+    return candidate
 
 
 def _reader_pages_from_chunks(chunks: list[Chunk]) -> list[ReaderPageResponse]:
