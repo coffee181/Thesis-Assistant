@@ -154,6 +154,25 @@ def init_db(conn: sqlite3.Connection) -> None:
 
         create index if not exists idx_paper_tags_tag_id
         on paper_tags(tag_id);
+
+        create table if not exists jobs (
+            id integer primary key autoincrement,
+            kind text not null,
+            status text not null,
+            source_path text not null,
+            description text,
+            total_items integer not null default 0,
+            processed_items integer not null default 0,
+            succeeded_items integer not null default 0,
+            failed_items integer not null default 0,
+            error text,
+            result_json text,
+            created_at text not null default current_timestamp,
+            updated_at text not null default current_timestamp
+        );
+
+        create index if not exists idx_jobs_created_at
+        on jobs(created_at, id);
         """
     )
     _ensure_column(

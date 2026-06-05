@@ -11,6 +11,7 @@ from knowledge_agent.repositories import (
     ChunksRepository,
     DocumentsRepository,
     HighlightsRepository,
+    JobsRepository,
     NotesRepository,
     PapersRepository,
     QnaRepository,
@@ -88,7 +89,57 @@ def test_paper_and_document_roundtrip(tmp_path: Path):
         assert papers.list_all()[0].arxiv_id == "2401.12345"
         assert papers.list_all()[0].entry_type == "article"
         assert documents.find_by_hash("abc123").id == document.id
-        assert document.parse_status == "pending"
+    assert document.parse_status == "pending"
+
+
+def test_jobs_repository_tracks_state_transitions(tmp_path: Path):
+    db_path = tmp_path / "library.sqlite"
+    with connect(db_path) as conn:
+        init_db(conn)
+        jobs = JobsRepository(conn)
+
+        queued = jobs.create(
+            kind="folder_import",
+            source_path="F:\\papers",
+            description="Import folder F:\\papers",
+        )
+        running = jobs.start(queued.id, total_items=3)
+        progressed = jobs.update_progress(
+            queued.id,
+            processed_items=2,
+            succeeded_items=1,
+            failed_items=1,
+            result_json='{"failures":[{"source_path":"broken.pdf","error":"bad pdf"}]}',
+        )
+        completed = jobs.complete(
+            queued.id,
+            processed_items=3,
+            succeeded_items=2,
+            failed_items=1,
+            result_json='{"imported_count":2,"failed_count":1}',
+        )
+        failed = jobs.create(
+            kind="folder_import",
+            source_path="F:\\broken",
+            description=None,
+        )
+        failed = jobs.fail(failed.id, "source path is not a folder")
+        recent = jobs.list_recent()
+
+    assert queued.status == "queued"
+    assert queued.source_path == "F:\\papers"
+    assert queued.description == "Import folder F:\\papers"
+    assert running.status == "running"
+    assert running.total_items == 3
+    assert progressed.processed_items == 2
+    assert progressed.succeeded_items == 1
+    assert progressed.failed_items == 1
+    assert completed.status == "succeeded"
+    assert completed.processed_items == 3
+    assert completed.result_json == '{"imported_count":2,"failed_count":1}'
+    assert failed.status == "failed"
+    assert failed.error == "source path is not a folder"
+    assert [job.id for job in recent] == [failed.id, queued.id]
 
 
 def test_upsert_metadata_updates_existing_doi(tmp_path: Path):

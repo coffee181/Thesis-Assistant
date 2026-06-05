@@ -2,7 +2,7 @@ from pathlib import Path
 import sqlite3
 from typing import Callable
 
-from fastapi import FastAPI, HTTPException, Query, status
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 import httpx
@@ -20,13 +20,15 @@ from knowledge_agent.bibliography import (
 from knowledge_agent.config import AppConfig, load_config
 from knowledge_agent.db import connect, init_db
 from knowledge_agent.discovery import ExternalDiscoveryClient
-from knowledge_agent.import_service import import_pdf, import_pdf_folder
+from knowledge_agent.import_service import import_pdf
+from knowledge_agent.job_service import run_folder_import_job
 from knowledge_agent.models import BibliographyRecord, Chunk, ProviderSettings, SearchResultRecord
 from knowledge_agent.providers import ChatProvider, HttpChatProvider, ProviderCallError
 from knowledge_agent.repositories import (
     ChunksRepository,
     DocumentsRepository,
     HighlightsRepository,
+    JobsRepository,
     NotesRepository,
     PapersRepository,
     SettingsRepository,
@@ -43,14 +45,14 @@ from knowledge_agent.schemas import (
     ExportBibliographyResponse,
     HighlightResponse,
     HighlightsResponse,
-    ImportFolderFailureResponse,
     ImportFolderRequest,
-    ImportFolderResponse,
     ImportPendingDownloadRequest,
     ImportBibliographyRequest,
     ImportBibliographyResponse,
     ImportPdfRequest,
     ImportPdfResponse,
+    JobResponse,
+    JobsResponse,
     LibraryResponse,
     LocalSearchResponse,
     NoteResponse,
@@ -63,6 +65,7 @@ from knowledge_agent.schemas import (
     ProviderSettingsResponse,
     ReaderContextResponse,
     ReaderPageResponse,
+    RetryJobResponse,
     SelectLibraryRequest,
     SetFavoriteRequest,
     SelectedTextAssistantRequest,
@@ -446,41 +449,83 @@ def create_app(
 
     @app.post(
         "/api/imports/folder",
-        response_model=ImportFolderResponse,
-        status_code=status.HTTP_201_CREATED,
+        response_model=JobResponse,
+        status_code=status.HTTP_202_ACCEPTED,
     )
-    def import_folder_endpoint(request: ImportFolderRequest) -> ImportFolderResponse:
+    def import_folder_endpoint(
+        request: ImportFolderRequest,
+        background_tasks: BackgroundTasks,
+    ) -> JobResponse:
         active_config = config
         source_dir = Path(request.source_dir)
         if not source_dir.exists():
             raise HTTPException(status_code=404, detail="source folder not found")
+        if not source_dir.is_dir():
+            raise HTTPException(status_code=400, detail="source path is not a folder")
+        with connect(active_config.database_path) as conn:
+            job = JobsRepository(conn).create(
+                kind="folder_import",
+                source_path=str(source_dir),
+                description=f"Import folder {source_dir}",
+            )
+        background_tasks.add_task(
+            _run_folder_import_job_background,
+            active_config.database_path,
+            active_config.library_dir,
+            job.id,
+            source_dir,
+        )
+        return JobResponse.model_validate(job)
+
+    @app.get("/api/jobs", response_model=JobsResponse)
+    def list_jobs() -> JobsResponse:
+        with connect(config.database_path) as conn:
+            jobs = JobsRepository(conn).list_recent()
+        return JobsResponse(jobs=jobs)
+
+    @app.get("/api/jobs/{job_id}", response_model=JobResponse)
+    def get_job(job_id: int) -> JobResponse:
+        try:
+            with connect(config.database_path) as conn:
+                job = JobsRepository(conn).get(job_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="job not found") from exc
+        return JobResponse.model_validate(job)
+
+    @app.post(
+        "/api/jobs/{job_id}/retry",
+        response_model=RetryJobResponse,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def retry_job(job_id: int, background_tasks: BackgroundTasks) -> RetryJobResponse:
+        active_config = config
         try:
             with connect(active_config.database_path) as conn:
-                result = import_pdf_folder(conn, active_config.library_dir, source_dir)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return ImportFolderResponse(
-            source_path=result.source_path,
-            discovered_count=result.discovered_count,
-            imported_count=result.imported_count,
-            skipped_count=result.skipped_count,
-            failed_count=result.failed_count,
-            imports=[
-                ImportPdfResponse(
-                    imported=item.imported,
-                    paper=item.paper,
-                    document=item.document,
+                jobs = JobsRepository(conn)
+                failed_job = jobs.get(job_id)
+                if failed_job.status != "failed":
+                    raise HTTPException(
+                        status_code=400,
+                        detail="only failed jobs can be retried",
+                    )
+                if failed_job.kind != "folder_import":
+                    raise HTTPException(status_code=400, detail="job kind cannot be retried")
+                retry = jobs.create(
+                    kind=failed_job.kind,
+                    source_path=failed_job.source_path,
+                    description=failed_job.description,
                 )
-                for item in result.imports
-            ],
-            failures=[
-                ImportFolderFailureResponse(
-                    source_path=failure.source_path,
-                    error=failure.error,
-                )
-                for failure in result.failures
-            ],
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="job not found") from exc
+
+        background_tasks.add_task(
+            _run_folder_import_job_background,
+            active_config.database_path,
+            active_config.library_dir,
+            retry.id,
+            Path(retry.source_path),
         )
+        return RetryJobResponse.model_validate(retry)
 
     @app.post(
         "/api/imports/bibliography",
@@ -614,6 +659,16 @@ def create_app(
         )
 
     return app
+
+
+def _run_folder_import_job_background(
+    database_path: Path,
+    library_dir: Path,
+    job_id: int,
+    source_dir: Path,
+) -> None:
+    with connect(database_path) as conn:
+        run_folder_import_job(conn, library_dir, job_id, source_dir)
 
 
 def _library_response(config: AppConfig) -> LibraryResponse:

@@ -60,14 +60,24 @@ export type ExportBibliographyResponse = {
   content: string;
 };
 
-export type ImportFolderResponse = {
+export type Job = {
+  id: number;
+  kind: string;
+  status: string;
   source_path: string;
-  discovered_count: number;
-  imported_count: number;
-  skipped_count: number;
-  failed_count: number;
-  imports: ImportPdfResponse[];
-  failures: { source_path: string; error: string }[];
+  description: string | null;
+  total_items: number;
+  processed_items: number;
+  succeeded_items: number;
+  failed_items: number;
+  error: string | null;
+  result_json: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type JobsResponse = {
+  jobs: Job[];
 };
 
 export type SearchHit = {
@@ -320,7 +330,7 @@ export async function importPdf(sourcePath: string): Promise<void> {
   }
 }
 
-export async function importFolder(sourceDir: string): Promise<ImportFolderResponse> {
+export async function importFolder(sourceDir: string): Promise<Job> {
   const response = await fetch(`${API_BASE}/api/imports/folder`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -329,6 +339,24 @@ export async function importFolder(sourceDir: string): Promise<ImportFolderRespo
   if (!response.ok) {
     const payload = await response.json().catch(() => ({ detail: "Folder import failed" }));
     throw new Error(payload.detail ?? "Folder import failed");
+  }
+  return response.json();
+}
+
+export async function listJobs(): Promise<JobsResponse> {
+  const response = await fetch(`${API_BASE}/api/jobs`);
+  if (!response.ok) throw new Error("Could not load jobs");
+  const payload = (await response.json()) as Partial<JobsResponse>;
+  return { jobs: Array.isArray(payload.jobs) ? payload.jobs : [] };
+}
+
+export async function retryJob(jobId: number): Promise<Job> {
+  const response = await fetch(`${API_BASE}/api/jobs/${jobId}/retry`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({ detail: "Job retry failed" }));
+    throw new Error(payload.detail ?? "Job retry failed");
   }
   return response.json();
 }

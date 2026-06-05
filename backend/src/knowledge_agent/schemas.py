@@ -92,6 +92,32 @@ class PapersResponse(BaseModel):
     papers: list[PaperResponse]
 
 
+class JobResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    kind: str
+    status: str
+    source_path: str
+    description: str | None
+    total_items: int
+    processed_items: int
+    succeeded_items: int
+    failed_items: int
+    error: str | None
+    result_json: str | None
+    created_at: str
+    updated_at: str
+
+
+class JobsResponse(BaseModel):
+    jobs: list[JobResponse]
+
+
+class RetryJobResponse(JobResponse):
+    pass
+
+
 class SetFavoriteRequest(BaseModel):
     favorite: bool
 

@@ -103,6 +103,23 @@ class Document:
 
 
 @dataclass(frozen=True)
+class Job:
+    id: int
+    kind: str
+    status: str
+    source_path: str
+    description: str | None
+    total_items: int
+    processed_items: int
+    succeeded_items: int
+    failed_items: int
+    error: str | None
+    result_json: str | None
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
 class ChunkInput:
     page_number: int
     chunk_index: int

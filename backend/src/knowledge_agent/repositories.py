@@ -9,6 +9,7 @@ from knowledge_agent.models import (
     Document,
     DiscoveryCandidate,
     Highlight,
+    Job,
     Note,
     Paper,
     ProviderSettings,
@@ -812,6 +813,153 @@ class DocumentsRepository:
             (page_count, parse_status, parse_error, document_id),
         )
         return self.get(document_id)
+
+
+class JobsRepository:
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def create(
+        self,
+        kind: str,
+        source_path: str,
+        description: str | None,
+    ) -> Job:
+        cursor = self._conn.execute(
+            """
+            insert into jobs (kind, status, source_path, description)
+            values (?, 'queued', ?, ?)
+            """,
+            (kind, source_path, description),
+        )
+        return self.get(cursor.lastrowid)
+
+    def get(self, job_id: int) -> Job:
+        row = self._conn.execute(
+            """
+            select
+                id,
+                kind,
+                status,
+                source_path,
+                description,
+                total_items,
+                processed_items,
+                succeeded_items,
+                failed_items,
+                error,
+                result_json,
+                created_at,
+                updated_at
+            from jobs
+            where id = ?
+            """,
+            (job_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"job not found: {job_id}")
+        return Job(**dict(row))
+
+    def list_recent(self, limit: int = 20) -> list[Job]:
+        rows = self._conn.execute(
+            """
+            select
+                id,
+                kind,
+                status,
+                source_path,
+                description,
+                total_items,
+                processed_items,
+                succeeded_items,
+                failed_items,
+                error,
+                result_json,
+                created_at,
+                updated_at
+            from jobs
+            order by created_at desc, id desc
+            limit ?
+            """,
+            (limit,),
+        ).fetchall()
+        return [Job(**dict(row)) for row in rows]
+
+    def start(self, job_id: int, total_items: int) -> Job:
+        self._conn.execute(
+            """
+            update jobs
+            set status = 'running',
+                total_items = ?,
+                processed_items = 0,
+                succeeded_items = 0,
+                failed_items = 0,
+                error = null,
+                updated_at = current_timestamp
+            where id = ?
+            """,
+            (total_items, job_id),
+        )
+        return self.get(job_id)
+
+    def update_progress(
+        self,
+        job_id: int,
+        processed_items: int,
+        succeeded_items: int,
+        failed_items: int,
+        result_json: str | None = None,
+    ) -> Job:
+        self._conn.execute(
+            """
+            update jobs
+            set processed_items = ?,
+                succeeded_items = ?,
+                failed_items = ?,
+                result_json = ?,
+                updated_at = current_timestamp
+            where id = ?
+            """,
+            (processed_items, succeeded_items, failed_items, result_json, job_id),
+        )
+        return self.get(job_id)
+
+    def complete(
+        self,
+        job_id: int,
+        processed_items: int,
+        succeeded_items: int,
+        failed_items: int,
+        result_json: str,
+    ) -> Job:
+        self._conn.execute(
+            """
+            update jobs
+            set status = 'succeeded',
+                processed_items = ?,
+                succeeded_items = ?,
+                failed_items = ?,
+                error = null,
+                result_json = ?,
+                updated_at = current_timestamp
+            where id = ?
+            """,
+            (processed_items, succeeded_items, failed_items, result_json, job_id),
+        )
+        return self.get(job_id)
+
+    def fail(self, job_id: int, error: str) -> Job:
+        self._conn.execute(
+            """
+            update jobs
+            set status = 'failed',
+                error = ?,
+                updated_at = current_timestamp
+            where id = ?
+            """,
+            (error[:500], job_id),
+        )
+        return self.get(job_id)
 
 
 class ChunksRepository:

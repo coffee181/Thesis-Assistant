@@ -146,6 +146,53 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+.jobs-section h2 {
+  font-size: 14px;
+  margin: 0 0 8px;
+}
+
+.job-list {
+  display: grid;
+  gap: 8px;
+}
+
+.job-item {
+  background: #ffffff;
+  border: 1px solid #d7dde5;
+  border-radius: 8px;
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+}
+
+.job-item strong {
+  color: #1f2937;
+  font-size: 13px;
+}
+
+.job-item span {
+  color: #475569;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.job-source {
+  color: #64748b;
+}
+
+.job-error {
+  color: #b91c1c;
+}
+
+.job-item button {
+  background: #1f2937;
+  border: 0;
+  border-radius: 6px;
+  color: #ffffff;
+  cursor: pointer;
+  padding: 7px 9px;
+}
+
 .paper-list {
   display: grid;
   gap: 10px;

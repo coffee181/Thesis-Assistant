@@ -18,7 +18,9 @@ import {
   importFolder,
   importPendingDownload,
   importPdf,
+  Job,
   listHighlights,
+  listJobs,
   listNotes,
   listPapers,
   LibraryStatus,
@@ -35,6 +37,7 @@ import {
   selectLibrary,
   SelectedTextAction,
   removePaperTag,
+  retryJob,
   setPaperFavorite,
 } from "./api";
 import "./styles.css";
@@ -69,6 +72,7 @@ export default function App() {
   const [selectedSourceSpan, setSelectedSourceSpan] = useState("");
   const [notes, setNotes] = useState<Note[]>([]);
   const [highlights, setHighlights] = useState<Highlight[]>([]);
+  const [jobs, setJobs] = useState<Job[]>([]);
   const [selectionBusy, setSelectionBusy] = useState(false);
   const [favoriteFilter, setFavoriteFilter] = useState(false);
   const [tagFilter, setTagFilter] = useState("");
@@ -78,6 +82,11 @@ export default function App() {
   async function refreshPapers(filters = { favorite: favoriteFilter, tag: tagFilter }) {
     const response = await listPapers(filters);
     setPapers(response.papers);
+  }
+
+  async function refreshJobs() {
+    const response = await listJobs();
+    setJobs(response.jobs);
   }
 
   function applyProviderSettings(settings: ProviderSettings) {
@@ -105,6 +114,12 @@ export default function App() {
         const settings = await getProviderSettings();
         if (!active) return;
         applyProviderSettings(settings);
+        try {
+          await refreshJobs();
+        } catch {
+          if (!active) return;
+          setJobs([]);
+        }
       } catch (error) {
         if (!active) return;
         setBackendStatus("offline");
@@ -136,8 +151,14 @@ export default function App() {
       setPendingDownloads({});
       setSearchHits([]);
       setExternalResults([]);
+      setJobs([]);
       setMessage("Library selected");
       await refreshPapers();
+      try {
+        await refreshJobs();
+      } catch {
+        setJobs([]);
+      }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Library selection failed");
     }
@@ -149,11 +170,11 @@ export default function App() {
     if (!sourceDir) return;
     setMessage("");
     try {
-      const response = await importFolder(sourceDir);
+      const job = await importFolder(sourceDir);
       setFolderPath("");
-      setMessage(
-        `Folder imported: ${response.imported_count} imported, ${response.skipped_count} skipped, ${response.failed_count} failed`,
-      );
+      setJobs((current) => [job, ...current.filter((item) => item.id !== job.id)]);
+      setMessage("Folder import queued");
+      await refreshJobs();
       await refreshPapers();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Folder import failed");
@@ -257,6 +278,19 @@ export default function App() {
       await refreshPapers();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Tag removal failed");
+    }
+  }
+
+  async function handleRetryJob(job: Job) {
+    setMessage("");
+    try {
+      const retry = await retryJob(job.id);
+      setJobs((current) => [retry, ...current.filter((item) => item.id !== retry.id)]);
+      setMessage("Job retry queued");
+      await refreshJobs();
+      await refreshPapers();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Job retry failed");
     }
   }
 
@@ -463,6 +497,7 @@ export default function App() {
 
   const selectionReady =
     readerContext !== null && selectedText.trim().length > 0 && selectedPageNumber !== null;
+  const recentJobs = Array.isArray(jobs) ? jobs : [];
 
   return (
     <main className="app-shell">
@@ -592,6 +627,36 @@ export default function App() {
         </form>
 
         {message ? <p className="message">{message}</p> : null}
+
+        <section className="jobs-section" aria-labelledby="jobs-heading">
+          <h2 id="jobs-heading">Jobs</h2>
+          <div className="job-list">
+            {recentJobs.length === 0 ? (
+              <p className="empty">No recent jobs.</p>
+            ) : (
+              recentJobs.map((job) => (
+                <article className="job-item" key={job.id}>
+                  <strong>
+                    {job.kind} - {job.status}
+                  </strong>
+                  <span className="job-source">{job.source_path}</span>
+                  <span>{job.processed_items} / {job.total_items} processed</span>
+                  <span>{job.succeeded_items} succeeded, {job.failed_items} failed</span>
+                  {job.error ? <span className="job-error">{job.error}</span> : null}
+                  {job.status === "failed" ? (
+                    <button
+                      type="button"
+                      onClick={() => handleRetryJob(job)}
+                      aria-label={`Retry job ${job.id}`}
+                    >
+                      Retry
+                    </button>
+                  ) : null}
+                </article>
+              ))
+            )}
+          </div>
+        </section>
 
         <section className="library-section" aria-labelledby="library-heading">
           <h2 id="library-heading">Library</h2>

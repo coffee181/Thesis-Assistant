@@ -64,6 +64,8 @@ const readerContextPayload = {
   ],
 };
 
+const emptyJobsResponse = { jobs: [] };
+
 beforeEach(() => {
   vi.stubGlobal("fetch", fetchMock);
 });
@@ -91,6 +93,10 @@ function queueInitialReaderLoad(settings: ProviderSettings = defaultProviderSett
     .mockResolvedValueOnce({
       ok: true,
       json: async () => settings,
+    })
+    .mockResolvedValueOnce({
+      ok: true,
+      json: async () => emptyJobsResponse,
     });
 }
 
@@ -154,6 +160,10 @@ describe("App", () => {
       .mockResolvedValueOnce({
         ok: true,
         json: async () => defaultProviderSettings,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => emptyJobsResponse,
       });
 
     render(<App />);
@@ -176,6 +186,9 @@ describe("App", () => {
       }
       if (url.endsWith("/api/settings/provider")) {
         return jsonResponse(defaultProviderSettings);
+      }
+      if (url.endsWith("/api/jobs")) {
+        return jsonResponse(emptyJobsResponse);
       }
       throw new Error(`Unhandled request: ${url}`);
     });
@@ -214,6 +227,9 @@ describe("App", () => {
       }
       if (url.endsWith("/api/settings/provider")) {
         return jsonResponse(defaultProviderSettings);
+      }
+      if (url.endsWith("/api/jobs")) {
+        return jsonResponse(emptyJobsResponse);
       }
       throw new Error(`Unhandled request: ${url}`);
     });
@@ -263,6 +279,9 @@ describe("App", () => {
       }
       if (url.endsWith("/api/settings/provider")) {
         return jsonResponse(configuredProviderSettings);
+      }
+      if (url.endsWith("/api/jobs")) {
+        return jsonResponse(emptyJobsResponse);
       }
       if (url.endsWith("/api/papers/1/reader-context")) {
         return jsonResponse(readerContextPayload);
@@ -342,8 +361,9 @@ describe("App", () => {
     expect(screen.getByText("Context: none")).toBeInTheDocument();
   });
 
-  it("imports a PDF folder and refreshes papers with import counts", async () => {
+  it("job panel queues a PDF folder import and refreshes job progress", async () => {
     let paperLoads = 0;
+    let jobLoads = 0;
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
       if (url.endsWith("/health")) {
         return jsonResponse({ status: "ok", service: "knowledge-agent-backend" });
@@ -353,13 +373,44 @@ describe("App", () => {
       }
       if (url.endsWith("/api/imports/folder") && init?.method === "POST") {
         return jsonResponse({
+          id: 41,
+          kind: "folder_import",
+          status: "queued",
           source_path: "F:\\incoming",
-          discovered_count: 3,
-          imported_count: 2,
-          skipped_count: 1,
-          failed_count: 0,
-          imports: [],
-          failures: [],
+          description: "Import folder F:\\incoming",
+          total_items: 0,
+          processed_items: 0,
+          succeeded_items: 0,
+          failed_items: 0,
+          error: null,
+          result_json: null,
+          created_at: "now",
+          updated_at: "now",
+        });
+      }
+      if (url.endsWith("/api/jobs")) {
+        jobLoads += 1;
+        return jsonResponse({
+          jobs:
+            jobLoads === 1
+              ? []
+              : [
+                  {
+                    id: 41,
+                    kind: "folder_import",
+                    status: "succeeded",
+                    source_path: "F:\\incoming",
+                    description: "Import folder F:\\incoming",
+                    total_items: 3,
+                    processed_items: 3,
+                    succeeded_items: 2,
+                    failed_items: 1,
+                    error: null,
+                    result_json: null,
+                    created_at: "now",
+                    updated_at: "later",
+                  },
+                ],
         });
       }
       if (url.endsWith("/api/papers")) {
@@ -390,8 +441,102 @@ describe("App", () => {
     expect(JSON.parse(String(importCall?.[1]?.body))).toEqual({
       source_dir: "F:\\incoming",
     });
-    expect(await screen.findByText("Folder imported: 2 imported, 1 skipped, 0 failed")).toBeInTheDocument();
+    expect(await screen.findByText("Folder import queued")).toBeInTheDocument();
+    expect(await screen.findByText("folder_import - succeeded")).toBeInTheDocument();
+    expect(await screen.findByText("3 / 3 processed")).toBeInTheDocument();
+    expect(await screen.findByText("2 succeeded, 1 failed")).toBeInTheDocument();
     expect(await screen.findByText("Folder Paper")).toBeInTheDocument();
+  });
+
+  it("job panel retries a failed folder import job", async () => {
+    let jobLoads = 0;
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/health")) {
+        return jsonResponse({ status: "ok", service: "knowledge-agent-backend" });
+      }
+      if (url.endsWith("/api/library")) {
+        return jsonResponse(defaultLibraryStatus);
+      }
+      if (url.endsWith("/api/papers")) {
+        return jsonResponse({ papers: [] });
+      }
+      if (url.endsWith("/api/settings/provider")) {
+        return jsonResponse(defaultProviderSettings);
+      }
+      if (url.endsWith("/api/jobs/7/retry") && init?.method === "POST") {
+        return jsonResponse({
+          id: 8,
+          kind: "folder_import",
+          status: "queued",
+          source_path: "F:\\incoming",
+          description: "Import folder F:\\incoming",
+          total_items: 0,
+          processed_items: 0,
+          succeeded_items: 0,
+          failed_items: 0,
+          error: null,
+          result_json: null,
+          created_at: "now",
+          updated_at: "now",
+        });
+      }
+      if (url.endsWith("/api/jobs")) {
+        jobLoads += 1;
+        return jsonResponse({
+          jobs:
+            jobLoads === 1
+              ? [
+                  {
+                    id: 7,
+                    kind: "folder_import",
+                    status: "failed",
+                    source_path: "F:\\incoming",
+                    description: "Import folder F:\\incoming",
+                    total_items: 3,
+                    processed_items: 1,
+                    succeeded_items: 0,
+                    failed_items: 1,
+                    error: "source path is not a folder",
+                    result_json: null,
+                    created_at: "earlier",
+                    updated_at: "earlier",
+                  },
+                ]
+              : [
+                  {
+                    id: 8,
+                    kind: "folder_import",
+                    status: "queued",
+                    source_path: "F:\\incoming",
+                    description: "Import folder F:\\incoming",
+                    total_items: 0,
+                    processed_items: 0,
+                    succeeded_items: 0,
+                    failed_items: 0,
+                    error: null,
+                    result_json: null,
+                    created_at: "now",
+                    updated_at: "now",
+                  },
+                ],
+        });
+      }
+      throw new Error(`Unhandled request: ${url}`);
+    });
+
+    render(<App />);
+    expect(await screen.findByText("folder_import - failed")).toBeInTheDocument();
+    expect(await screen.findByText("source path is not a folder")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Retry job 7" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://127.0.0.1:8765/api/jobs/7/retry",
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
+    expect(await screen.findByText("Job retry queued")).toBeInTheDocument();
+    expect(await screen.findByText("folder_import - queued")).toBeInTheDocument();
   });
 
   it("imports a PDF by source path", async () => {
@@ -411,6 +556,10 @@ describe("App", () => {
       .mockResolvedValueOnce({
         ok: true,
         json: async () => defaultProviderSettings,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => emptyJobsResponse,
       })
       .mockResolvedValueOnce({
         ok: true,
@@ -451,6 +600,10 @@ describe("App", () => {
       .mockResolvedValueOnce({
         ok: true,
         json: async () => defaultProviderSettings,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => emptyJobsResponse,
       })
       .mockResolvedValueOnce({
         ok: true,
@@ -525,6 +678,10 @@ describe("App", () => {
       .mockResolvedValueOnce({
         ok: true,
         json: async () => defaultProviderSettings,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => emptyJobsResponse,
       });
 
     render(<App />);
@@ -544,6 +701,9 @@ describe("App", () => {
       }
       if (url.endsWith("/api/settings/provider")) {
         return jsonResponse(defaultProviderSettings);
+      }
+      if (url.endsWith("/api/jobs")) {
+        return jsonResponse(emptyJobsResponse);
       }
       if (url.endsWith("/api/papers/1/favorite") && init?.method === "PUT") {
         return jsonResponse({ ...readerPaper, title: "Org Paper", favorite: true, tags: [] });
@@ -589,6 +749,9 @@ describe("App", () => {
       if (url.endsWith("/api/settings/provider")) {
         return jsonResponse(defaultProviderSettings);
       }
+      if (url.endsWith("/api/jobs")) {
+        return jsonResponse(emptyJobsResponse);
+      }
       if (url.endsWith("/api/papers/1/tags") && init?.method === "POST") {
         return jsonResponse({ ...readerPaper, title: "Org Paper", favorite: false, tags: ["reading"] });
       }
@@ -632,6 +795,9 @@ describe("App", () => {
       }
       if (url.endsWith("/api/settings/provider")) {
         return jsonResponse(defaultProviderSettings);
+      }
+      if (url.endsWith("/api/jobs")) {
+        return jsonResponse(emptyJobsResponse);
       }
       if (url.endsWith("/api/papers?favorite=true&tag=reading")) {
         return jsonResponse({
@@ -677,6 +843,10 @@ describe("App", () => {
       })
       .mockResolvedValueOnce({
         ok: true,
+        json: async () => emptyJobsResponse,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
         json: async () => ({
           format: "bibtex",
           content: "@article{doe2024local,\n  title = {Local Knowledge Agents}\n}",
@@ -713,6 +883,10 @@ describe("App", () => {
       .mockResolvedValueOnce({
         ok: true,
         json: async () => defaultProviderSettings,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => emptyJobsResponse,
       })
       .mockResolvedValueOnce({
         ok: true,
@@ -771,6 +945,10 @@ describe("App", () => {
       .mockResolvedValueOnce({
         ok: true,
         json: async () => defaultProviderSettings,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => emptyJobsResponse,
       })
       .mockResolvedValueOnce({
         ok: true,
@@ -904,6 +1082,10 @@ describe("App", () => {
       })
       .mockResolvedValueOnce({
         ok: true,
+        json: async () => emptyJobsResponse,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
         json: async () => ({
           query: "closed paper",
           results: [
@@ -956,6 +1138,10 @@ describe("App", () => {
       })
       .mockResolvedValueOnce({
         ok: true,
+        json: async () => emptyJobsResponse,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
         json: async () => ({
           query: "contrastive retrieval",
           hits: [
@@ -1004,6 +1190,10 @@ describe("App", () => {
       .mockResolvedValueOnce({
         ok: true,
         json: async () => defaultProviderSettings,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => emptyJobsResponse,
       })
       .mockResolvedValueOnce({
         ok: true,
@@ -1313,6 +1503,10 @@ describe("App", () => {
       })
       .mockResolvedValueOnce({
         ok: true,
+        json: async () => emptyJobsResponse,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
         json: async () => ({
           provider: "openai_compatible",
           base_url: "https://api.example.test/v1",
@@ -1372,6 +1566,10 @@ describe("App", () => {
         json: async () => ({
           ...configuredProviderSettings,
         }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => emptyJobsResponse,
       })
       .mockResolvedValueOnce({
         ok: true,

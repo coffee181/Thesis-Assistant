@@ -1,9 +1,18 @@
+import json
 from pathlib import Path
 
+import pytest
+
 from knowledge_agent.db import connect, init_db
-from knowledge_agent.import_service import import_pdf, import_pdf_folder
-from knowledge_agent.models import BibliographyRecord
-from knowledge_agent.repositories import ChunksRepository, DocumentsRepository, PapersRepository
+from knowledge_agent.import_service import ImportResult, import_pdf, import_pdf_folder
+from knowledge_agent.job_service import run_folder_import_job
+from knowledge_agent.models import BibliographyRecord, Document, Paper
+from knowledge_agent.repositories import (
+    ChunksRepository,
+    DocumentsRepository,
+    JobsRepository,
+    PapersRepository,
+)
 
 
 def test_import_pdf_copies_file_and_creates_records(tmp_path: Path):
@@ -278,3 +287,155 @@ def test_import_pdf_folder_reports_per_file_failures(tmp_path: Path):
     assert result.skipped_count == 0
     assert result.failed_count == 1
     assert result.failures[0].source_path.endswith("broken.pdf")
+
+
+def test_folder_import_job_updates_progress(tmp_path: Path):
+    folder = tmp_path / "folder"
+    folder.mkdir()
+    first = folder / "A First.pdf"
+    duplicate = folder / "B Duplicate.pdf"
+    broken = folder / "broken.pdf"
+    first.write_bytes(b"%PDF-1.4 first")
+    duplicate.write_bytes(b"%PDF-1.4 first")
+    broken.mkdir()
+    library_root = tmp_path / "library"
+
+    with connect(library_root / "database.sqlite") as conn:
+        init_db(conn)
+        jobs = JobsRepository(conn)
+        job = jobs.create(
+            kind="folder_import",
+            source_path=str(folder),
+            description="Import folder",
+        )
+
+        completed = run_folder_import_job(conn, library_root, job.id, folder)
+        result = json.loads(completed.result_json or "{}")
+        papers = PapersRepository(conn).list_all()
+
+    assert completed.status == "succeeded"
+    assert completed.total_items == 3
+    assert completed.processed_items == 3
+    assert completed.succeeded_items == 2
+    assert completed.failed_items == 1
+    assert result["source_path"] == str(folder.resolve())
+    assert result["discovered_count"] == 3
+    assert result["imported_count"] == 1
+    assert result["skipped_count"] == 1
+    assert result["failed_count"] == 1
+    assert result["failures"][0]["source_path"].endswith("broken.pdf")
+    assert [paper.title for paper in papers] == ["A First"]
+
+
+def test_folder_import_job_commits_progress_for_separate_readers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    folder = tmp_path / "folder"
+    folder.mkdir()
+    (folder / "A First.pdf").write_bytes(b"%PDF-1.4 first")
+    (folder / "B Second.pdf").write_bytes(b"%PDF-1.4 second")
+    library_root = tmp_path / "library"
+    db_path = library_root / "database.sqlite"
+
+    with connect(db_path) as conn:
+        init_db(conn)
+        job = JobsRepository(conn).create(
+            kind="folder_import",
+            source_path=str(folder),
+            description="Import folder",
+        )
+
+    observed: dict[str, int | str] = {}
+    import_calls = 0
+
+    def fake_import_pdf(conn, library_root, source_path):
+        nonlocal import_calls
+        import_calls += 1
+        call_number = import_calls
+        if call_number == 2:
+            with connect(db_path) as read_conn:
+                mid_job = JobsRepository(read_conn).get(job.id)
+            observed["status"] = mid_job.status
+            observed["processed_items"] = mid_job.processed_items
+
+        paper = Paper(
+            id=call_number,
+            title=source_path.stem,
+            authors=None,
+            year=None,
+            doi=None,
+            venue=None,
+            abstract=None,
+            citation_key=None,
+            arxiv_id=None,
+            entry_type=None,
+            favorite=False,
+            tags=[],
+            created_at="now",
+        )
+        document = Document(
+            id=call_number,
+            paper_id=call_number,
+            library_path=f"papers/{call_number}/paper.pdf",
+            file_hash=f"hash-{call_number}",
+            page_count=None,
+            parse_status="failed",
+            parse_error=None,
+            created_at="now",
+        )
+        return ImportResult(paper=paper, document=document, imported=True)
+
+    monkeypatch.setattr("knowledge_agent.job_service.import_pdf", fake_import_pdf)
+
+    with connect(db_path) as conn:
+        run_folder_import_job(conn, library_root, job.id, folder)
+
+    assert observed == {"status": "running", "processed_items": 1}
+
+
+def test_folder_import_job_result_json_uses_folder_import_response_shape(
+    tmp_path: Path,
+):
+    folder = tmp_path / "folder"
+    folder.mkdir()
+    (folder / "A First.pdf").write_bytes(b"%PDF-1.4 first")
+    library_root = tmp_path / "library"
+
+    with connect(library_root / "database.sqlite") as conn:
+        init_db(conn)
+        jobs = JobsRepository(conn)
+        job = jobs.create(
+            kind="folder_import",
+            source_path=str(folder),
+            description="Import folder",
+        )
+
+        completed = run_folder_import_job(conn, library_root, job.id, folder)
+        result = json.loads(completed.result_json or "{}")
+
+    assert result["imports"][0]["imported"] is True
+    assert result["imports"][0]["paper"]["title"] == "A First"
+    assert result["imports"][0]["document"]["library_path"].endswith("/paper.pdf")
+    assert "paper_id" not in result["imports"][0]
+
+
+def test_folder_import_job_records_failure(tmp_path: Path):
+    source_path = tmp_path / "not-a-folder.pdf"
+    source_path.write_bytes(b"%PDF-1.4 not folder")
+    library_root = tmp_path / "library"
+
+    with connect(library_root / "database.sqlite") as conn:
+        init_db(conn)
+        jobs = JobsRepository(conn)
+        job = jobs.create(
+            kind="folder_import",
+            source_path=str(source_path),
+            description="Import folder",
+        )
+
+        failed = run_folder_import_job(conn, library_root, job.id, source_path)
+
+    assert failed.status == "failed"
+    assert failed.error == "source path is not a folder"
+    assert failed.processed_items == 0

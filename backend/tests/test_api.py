@@ -9,6 +9,7 @@ from knowledge_agent.db import connect, connect as real_connect
 from knowledge_agent.main import create_app
 from knowledge_agent.models import DiscoveryCandidate, ProviderSettings
 from knowledge_agent.providers import ProviderCallError, ProviderMessage
+from knowledge_agent.repositories import JobsRepository
 
 
 class ApiRecordingChatProvider:
@@ -291,7 +292,7 @@ def test_import_pdf_uses_one_library_snapshot_during_concurrent_switch(
     assert not (second_library / document_path).exists()
 
 
-def test_import_folder_endpoint_imports_recursive_pdfs(tmp_path: Path):
+def test_folder_import_endpoint_creates_observable_job(tmp_path: Path):
     source_dir = tmp_path / "papers"
     nested = source_dir / "nested"
     nested.mkdir(parents=True)
@@ -301,18 +302,86 @@ def test_import_folder_endpoint_imports_recursive_pdfs(tmp_path: Path):
     client = TestClient(create_app(library_dir=library_dir))
 
     response = client.post("/api/imports/folder", json={"source_dir": str(source_dir)})
+    jobs_response = client.get("/api/jobs")
+    job_id = response.json()["id"]
+    detail_response = client.get(f"/api/jobs/{job_id}")
     list_response = client.get("/api/papers")
 
-    assert response.status_code == 201
+    assert response.status_code == 202
     payload = response.json()
-    assert payload["discovered_count"] == 2
-    assert payload["imported_count"] == 2
-    assert payload["skipped_count"] == 0
-    assert payload["failed_count"] == 0
+    assert payload["kind"] == "folder_import"
+    assert payload["status"] == "queued"
+    assert payload["source_path"] == str(source_dir)
+    assert payload["processed_items"] == 0
+    assert jobs_response.status_code == 200
+    assert jobs_response.json()["jobs"][0]["id"] == job_id
+    assert detail_response.status_code == 200
+    detail = detail_response.json()
+    assert detail["status"] == "succeeded"
+    assert detail["total_items"] == 2
+    assert detail["processed_items"] == 2
+    assert detail["succeeded_items"] == 2
+    assert detail["failed_items"] == 0
     assert sorted(paper["title"] for paper in list_response.json()["papers"]) == [
         "First",
         "Second",
     ]
+
+
+def test_failed_folder_import_job_can_be_retried(tmp_path: Path):
+    source_dir = tmp_path / "retry-papers"
+    source_dir.mkdir()
+    (source_dir / "Retry Paper.pdf").write_bytes(b"%PDF-1.4 retry")
+    library_dir = tmp_path / "library"
+    client = TestClient(create_app(library_dir=library_dir))
+
+    with connect(library_dir / "database.sqlite") as conn:
+        jobs = JobsRepository(conn)
+        failed_job = jobs.create(
+            kind="folder_import",
+            source_path=str(source_dir),
+            description="Import retry-papers",
+        )
+        failed_job = jobs.fail(failed_job.id, "source path is not a folder")
+        completed_job = jobs.create(
+            kind="folder_import",
+            source_path=str(source_dir),
+            description="Already completed",
+        )
+        completed_job = jobs.complete(
+            completed_job.id,
+            processed_items=0,
+            succeeded_items=0,
+            failed_items=0,
+            result_json="{}",
+        )
+
+    retry_response = client.post(f"/api/jobs/{failed_job.id}/retry")
+    retry_payload = retry_response.json()
+    detail_response = client.get(f"/api/jobs/{retry_payload['id']}")
+    invalid_retry_response = client.post(f"/api/jobs/{completed_job.id}/retry")
+
+    assert retry_response.status_code == 202
+    assert retry_payload["id"] != failed_job.id
+    assert retry_payload["kind"] == "folder_import"
+    assert retry_payload["status"] == "queued"
+    assert retry_payload["source_path"] == str(source_dir)
+    assert detail_response.status_code == 200
+    assert detail_response.json()["status"] == "succeeded"
+    assert detail_response.json()["processed_items"] == 1
+    assert invalid_retry_response.status_code == 400
+    assert invalid_retry_response.json()["detail"] == "only failed jobs can be retried"
+
+
+def test_retry_job_endpoint_has_named_response_schema(tmp_path: Path):
+    client = TestClient(create_app(library_dir=tmp_path / "library"))
+
+    response = client.get("/openapi.json")
+    retry_schema = response.json()["paths"]["/api/jobs/{job_id}/retry"]["post"][
+        "responses"
+    ]["202"]["content"]["application/json"]["schema"]
+
+    assert retry_schema["$ref"] == "#/components/schemas/RetryJobResponse"
 
 
 def test_import_folder_endpoint_reports_missing_folder(tmp_path: Path):
