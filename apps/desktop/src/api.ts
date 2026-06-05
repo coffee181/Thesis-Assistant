@@ -8,6 +8,17 @@ export type Paper = {
   created_at: string;
 };
 
+export type Document = {
+  id: number;
+  paper_id: number;
+  library_path: string;
+  file_hash: string;
+  page_count: number | null;
+  parse_status: string;
+  parse_error: string | null;
+  created_at: string;
+};
+
 export type PapersResponse = {
   papers: Paper[];
 };
@@ -15,6 +26,33 @@ export type PapersResponse = {
 export type HealthResponse = {
   status: string;
   service: string;
+};
+
+export type SearchHit = {
+  paper_id: number;
+  title: string;
+  year: number | null;
+  doi: string | null;
+  document_id: number;
+  chunk_id: number;
+  page_number: number;
+  snippet: string;
+};
+
+export type LocalSearchResponse = {
+  query: string;
+  hits: SearchHit[];
+};
+
+export type ReaderPage = {
+  page_number: number;
+  text: string;
+};
+
+export type ReaderContext = {
+  paper: Paper;
+  document: Document;
+  pages: ReaderPage[];
 };
 
 export async function getHealth(): Promise<HealthResponse> {
@@ -39,4 +77,16 @@ export async function importPdf(sourcePath: string): Promise<void> {
     const payload = await response.json().catch(() => ({ detail: "Import failed" }));
     throw new Error(payload.detail ?? "Import failed");
   }
+}
+
+export async function searchLocal(query: string): Promise<LocalSearchResponse> {
+  const response = await fetch(`${API_BASE}/api/search/local?q=${encodeURIComponent(query)}`);
+  if (!response.ok) throw new Error("Could not search library");
+  return response.json();
+}
+
+export async function getReaderContext(paperId: number): Promise<ReaderContext> {
+  const response = await fetch(`${API_BASE}/api/papers/${paperId}/reader-context`);
+  if (!response.ok) throw new Error("Could not load paper context");
+  return response.json();
 }
