@@ -515,7 +515,12 @@ describe("App", () => {
     });
 
     render(<App />);
-    await userEvent.type(await screen.findByLabelText("PDF folder path"), "F:\\incoming");
+    expect(await screen.findByRole("button", { name: "Jobs" })).toBeInTheDocument();
+    expect(screen.queryByText("No recent jobs.")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Import" }));
+    await userEvent.click(screen.getByRole("button", { name: "Folder" }));
+    await userEvent.type(screen.getByLabelText("PDF folder path"), "F:\\incoming");
     await userEvent.click(screen.getByRole("button", { name: "Import folder" }));
 
     await waitFor(() => {
@@ -531,6 +536,8 @@ describe("App", () => {
       source_dir: "F:\\incoming",
     });
     expect(await screen.findByText("Folder import queued")).toBeInTheDocument();
+    await userEvent.click(await screen.findByRole("button", { name: "Jobs 1" }));
+    expect(await screen.findByRole("complementary", { name: "Jobs" })).toBeInTheDocument();
     expect(await screen.findByText("folder_import - succeeded")).toBeInTheDocument();
     expect(await screen.findByText("3 / 3 processed")).toBeInTheDocument();
     expect(await screen.findByText("2 succeeded, 1 failed")).toBeInTheDocument();
@@ -614,6 +621,8 @@ describe("App", () => {
     });
 
     render(<App />);
+    await userEvent.click(await screen.findByRole("button", { name: "Jobs 1" }));
+    expect(await screen.findByRole("complementary", { name: "Jobs" })).toBeInTheDocument();
     expect(await screen.findByText("folder_import - failed")).toBeInTheDocument();
     expect(await screen.findByText("source path is not a folder")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Retry job 7" }));

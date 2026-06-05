@@ -45,6 +45,7 @@ import {
 import { AssistantRail } from "./components/AssistantRail";
 import { DiscoverDrawer } from "./components/DiscoverDrawer";
 import { ImportDialog, ImportMode } from "./components/ImportDialog";
+import { JobsDrawer } from "./components/JobsDrawer";
 import { LibraryRail } from "./components/LibraryRail";
 import { ReaderWorkspace } from "./components/ReaderWorkspace";
 import { SettingsDialog } from "./components/SettingsDialog";
@@ -580,7 +581,7 @@ export default function App() {
     <main className="app-shell">
       <TopBar
         backendStatus={backendStatus}
-        jobCount={recentJobs.filter((job) => job.status === "queued" || job.status === "running").length}
+        jobCount={recentJobs.length}
         paperCount={libraryStatus?.paper_count ?? papers.length}
         searchQuery={searchQuery}
         onOpenDiscover={() => setOpenSurface("discover")}
@@ -707,6 +708,10 @@ export default function App() {
           onExternalQueryChange={setExternalQuery}
           onExternalSearch={handleExternalSearch}
         />
+      ) : null}
+
+      {openSurface === "jobs" ? (
+        <JobsDrawer jobs={recentJobs} onClose={() => setOpenSurface(null)} onRetryJob={handleRetryJob} />
       ) : null}
     </main>
   );

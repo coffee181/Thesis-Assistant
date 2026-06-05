@@ -576,6 +576,33 @@ textarea {
   padding: 12px;
 }
 
+.job-card {
+  border: 1px solid #d9e0ea;
+  border-radius: 8px;
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+}
+
+.job-card strong {
+  font-size: 13px;
+}
+
+.job-card span {
+  color: #475569;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.job-card button {
+  background: #1f2937;
+  border: 0;
+  border-radius: 6px;
+  color: #ffffff;
+  cursor: pointer;
+  padding: 7px 9px;
+}
+
 .sidebar {
   border-right: 1px solid #d7dde5;
   background: #ffffff;
