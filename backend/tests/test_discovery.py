@@ -5,7 +5,9 @@ from knowledge_agent.discovery import (
     classify_query,
     merge_candidates,
     normalize_arxiv_feed,
+    normalize_crossref_work,
     normalize_openalex_work,
+    normalize_semantic_scholar_paper,
     normalize_unpaywall_record,
 )
 from knowledge_agent.models import DiscoveryCandidate
@@ -123,6 +125,65 @@ def test_normalize_unpaywall_record_extracts_best_oa_location():
     assert candidate.landing_url == "https://example.test/local"
 
 
+def test_normalize_crossref_work_extracts_metadata_and_links():
+    candidate = normalize_crossref_work(
+        {
+            "DOI": "10.1234/CROSS",
+            "title": ["Crossref Local Agents"],
+            "author": [
+                {"given": "Jane", "family": "Doe"},
+                {"name": "Local Consortium"},
+            ],
+            "published-print": {"date-parts": [[2023, 5, 1]]},
+            "container-title": ["Proceedings of Local Research"],
+            "abstract": "<jats:p>Traceable discovery from Crossref.</jats:p>",
+            "link": [
+                {
+                    "URL": "https://example.test/crossref.pdf",
+                    "content-type": "application/pdf",
+                }
+            ],
+            "URL": "https://doi.org/10.1234/CROSS",
+        }
+    )
+
+    assert candidate.source == "crossref"
+    assert candidate.external_id == "10.1234/cross"
+    assert candidate.title == "Crossref Local Agents"
+    assert candidate.authors == "Jane Doe and Local Consortium"
+    assert candidate.year == 2023
+    assert candidate.doi == "10.1234/cross"
+    assert candidate.venue == "Proceedings of Local Research"
+    assert candidate.abstract == "Traceable discovery from Crossref."
+    assert candidate.pdf_url == "https://example.test/crossref.pdf"
+    assert candidate.landing_url == "https://doi.org/10.1234/CROSS"
+
+
+def test_normalize_semantic_scholar_paper_extracts_open_access_pdf():
+    candidate = normalize_semantic_scholar_paper(
+        {
+            "paperId": "S2-123",
+            "title": "Semantic Scholar Local Agents",
+            "authors": [{"name": "Jane Doe"}, {"name": "John Smith"}],
+            "year": 2024,
+            "venue": "Local AI",
+            "abstract": "Semantic Scholar discovery.",
+            "externalIds": {"DOI": "10.1234/semantic", "ArXiv": "2401.12345"},
+            "openAccessPdf": {"url": "https://example.test/semantic.pdf"},
+            "url": "https://www.semanticscholar.org/paper/S2-123",
+        }
+    )
+
+    assert candidate.source == "semantic_scholar"
+    assert candidate.external_id == "S2-123"
+    assert candidate.title == "Semantic Scholar Local Agents"
+    assert candidate.authors == "Jane Doe and John Smith"
+    assert candidate.year == 2024
+    assert candidate.doi == "10.1234/semantic"
+    assert candidate.arxiv_id == "2401.12345"
+    assert candidate.pdf_url == "https://example.test/semantic.pdf"
+
+
 def test_merge_candidates_deduplicates_by_doi_and_keeps_pdf_url():
     merged = merge_candidates(
         [
@@ -200,3 +261,63 @@ def test_external_discovery_client_uses_injected_http_client_for_doi_search():
     assert candidates[0].pdf_url == "https://example.test/local.pdf"
     assert any("openalex.org/works/doi:10.1234%2Flocal" in url for url in requested_urls)
     assert any("api.unpaywall.org/v2/10.1234%2Flocal" in url for url in requested_urls)
+
+
+def test_external_discovery_client_queries_crossref_and_semantic_scholar():
+    requested_urls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested_urls.append(str(request.url))
+        host = request.url.host or ""
+        if "openalex.org" in host:
+            return httpx.Response(200, json={"results": []})
+        if "arxiv.org" in host:
+            return httpx.Response(
+                200,
+                text='<feed xmlns="http://www.w3.org/2005/Atom"></feed>',
+            )
+        if "crossref.org" in host:
+            return httpx.Response(
+                200,
+                json={
+                    "message": {
+                        "items": [
+                            {
+                                "DOI": "10.1234/cross",
+                                "title": ["Crossref Local Agents"],
+                                "URL": "https://doi.org/10.1234/cross",
+                            }
+                        ]
+                    }
+                },
+            )
+        if "semanticscholar.org" in host:
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "paperId": "S2-123",
+                            "title": "Semantic Scholar Local Agents",
+                            "externalIds": {"DOI": "10.1234/semantic"},
+                        }
+                    ]
+                },
+            )
+        return httpx.Response(404)
+
+    client = ExternalDiscoveryClient(
+        http_client=httpx.Client(transport=httpx.MockTransport(handler))
+    )
+
+    candidates = client.search("local agents", limit=5)
+
+    assert [candidate.source for candidate in candidates] == [
+        "crossref",
+        "semantic_scholar",
+    ]
+    assert any("api.crossref.org/works" in url for url in requested_urls)
+    assert any(
+        "api.semanticscholar.org/graph/v1/paper/search" in url
+        for url in requested_urls
+    )

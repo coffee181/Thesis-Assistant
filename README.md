@@ -14,7 +14,7 @@ This repository currently implements the local research assistant MVP slice:
 - Hash-based duplicate detection.
 - Basic paper listing API.
 - BibTeX/RIS bibliography import and export.
-- External literature discovery with open PDF download/import.
+- External literature discovery through OpenAlex, Crossref, Semantic Scholar, arXiv, and Unpaywall, with open PDF download/import.
 - Local search over paper metadata and extracted PDF pages.
 - Managed PDF preview with extracted text reader context.
 - Current-paper assistant Q&A with page citations.

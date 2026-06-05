@@ -9,7 +9,12 @@ from knowledge_agent.models import DiscoveryCandidate
 
 
 OPENALEX_BASE_URL = "https://api.openalex.org"
+CROSSREF_BASE_URL = "https://api.crossref.org"
 ARXIV_BASE_URL = "https://export.arxiv.org/api/query"
+SEMANTIC_SCHOLAR_BASE_URL = "https://api.semanticscholar.org/graph/v1"
+SEMANTIC_SCHOLAR_FIELDS = (
+    "paperId,title,authors,year,venue,abstract,externalIds,openAccessPdf,url"
+)
 UNPAYWALL_BASE_URL = "https://api.unpaywall.org/v2"
 UNPAYWALL_EMAIL = "knowledge-agent@example.invalid"
 
@@ -73,6 +78,43 @@ def normalize_arxiv_feed(content: str) -> list[DiscoveryCandidate]:
     return candidates
 
 
+def normalize_crossref_work(work: dict[str, object]) -> DiscoveryCandidate:
+    doi = _normalize_doi(_string_value(work.get("DOI")))
+    return DiscoveryCandidate(
+        source="crossref",
+        external_id=doi or _clean_text(_string_value(work.get("URL"))) or "unknown",
+        title=_clean_text(_first_string(work.get("title"))) or "Untitled",
+        authors=_authors_from_crossref(work.get("author")),
+        year=_year_from_crossref(work),
+        doi=doi,
+        venue=_clean_text(_first_string(work.get("container-title"))),
+        abstract=_strip_markup(_clean_text(_string_value(work.get("abstract")))),
+        arxiv_id=None,
+        pdf_url=_crossref_pdf_url(work.get("link")),
+        landing_url=_clean_text(_string_value(work.get("URL"))),
+    )
+
+
+def normalize_semantic_scholar_paper(paper: dict[str, object]) -> DiscoveryCandidate:
+    external_ids = _dict_value(paper.get("externalIds"))
+    arxiv_id = _strip_arxiv_version(_string_value(external_ids.get("ArXiv")) or "")
+    return DiscoveryCandidate(
+        source="semantic_scholar",
+        external_id=_clean_text(_string_value(paper.get("paperId"))) or "unknown",
+        title=_clean_text(_string_value(paper.get("title"))) or "Untitled",
+        authors=_authors_from_semantic_scholar(paper.get("authors")),
+        year=_int_value(paper.get("year")),
+        doi=_normalize_doi(_string_value(external_ids.get("DOI"))),
+        venue=_clean_text(_string_value(paper.get("venue"))),
+        abstract=_clean_text(_string_value(paper.get("abstract"))),
+        arxiv_id=arxiv_id or None,
+        pdf_url=_clean_text(
+            _string_value(_dict_value(paper.get("openAccessPdf")).get("url"))
+        ),
+        landing_url=_clean_text(_string_value(paper.get("url"))),
+    )
+
+
 def normalize_unpaywall_record(record: dict[str, object]) -> DiscoveryCandidate:
     best_location = _dict_value(record.get("best_oa_location"))
     doi = _normalize_doi(_string_value(record.get("doi")))
@@ -126,6 +168,10 @@ class ExternalDiscoveryClient:
         candidates.extend(self._search_openalex(query_type, normalized_query, limit))
         if query_type != "doi":
             candidates.extend(self._search_arxiv(normalized_query, limit))
+        candidates.extend(self._search_crossref(query_type, normalized_query, limit))
+        candidates.extend(
+            self._search_semantic_scholar(query_type, normalized_query, limit)
+        )
         if query_type == "doi":
             candidates.extend(self._search_unpaywall(normalized_query))
         return merge_candidates(candidates)[:limit]
@@ -167,6 +213,70 @@ class ExternalDiscoveryClient:
             )
             response.raise_for_status()
             return normalize_arxiv_feed(response.text)
+        except Exception:
+            return []
+
+    def _search_crossref(
+        self,
+        query_type: str,
+        query: str,
+        limit: int,
+    ) -> list[DiscoveryCandidate]:
+        try:
+            if query_type == "doi":
+                response = self._http_client.get(
+                    f"{CROSSREF_BASE_URL}/works/{quote(query, safe='')}"
+                )
+                response.raise_for_status()
+                message = _dict_value(response.json().get("message"))
+                return [normalize_crossref_work(message)] if message else []
+
+            response = self._http_client.get(
+                f"{CROSSREF_BASE_URL}/works",
+                params={"query.bibliographic": query, "rows": str(limit)},
+            )
+            response.raise_for_status()
+            message = _dict_value(response.json().get("message"))
+            items = message.get("items")
+            if not isinstance(items, list):
+                return []
+            return [
+                normalize_crossref_work(item)
+                for item in items
+                if isinstance(item, dict)
+            ]
+        except Exception:
+            return []
+
+    def _search_semantic_scholar(
+        self,
+        query_type: str,
+        query: str,
+        limit: int,
+    ) -> list[DiscoveryCandidate]:
+        try:
+            if query_type in {"doi", "arxiv"}:
+                identifier_type = "DOI" if query_type == "doi" else "ARXIV"
+                response = self._http_client.get(
+                    (
+                        f"{SEMANTIC_SCHOLAR_BASE_URL}/paper/"
+                        f"{identifier_type}:{quote(query, safe='')}"
+                    ),
+                    params={"fields": SEMANTIC_SCHOLAR_FIELDS},
+                )
+                response.raise_for_status()
+                return _semantic_scholar_candidates_from_payload(response.json())
+
+            response = self._http_client.get(
+                f"{SEMANTIC_SCHOLAR_BASE_URL}/paper/search",
+                params={
+                    "query": query,
+                    "limit": str(limit),
+                    "fields": SEMANTIC_SCHOLAR_FIELDS,
+                },
+            )
+            response.raise_for_status()
+            return _semantic_scholar_candidates_from_payload(response.json())
         except Exception:
             return []
 
@@ -215,6 +325,30 @@ def _authors_from_arxiv(entry: ET.Element) -> str | None:
     return " and ".join(author for author in authors if author) or None
 
 
+def _authors_from_crossref(value: object) -> str | None:
+    authors = []
+    if isinstance(value, list):
+        for item in value:
+            author = _dict_value(item)
+            literal_name = _clean_text(_string_value(author.get("name")))
+            given = _clean_text(_string_value(author.get("given")))
+            family = _clean_text(_string_value(author.get("family")))
+            name = literal_name or " ".join(part for part in [given, family] if part)
+            if name:
+                authors.append(name)
+    return " and ".join(authors) or None
+
+
+def _authors_from_semantic_scholar(value: object) -> str | None:
+    authors = []
+    if isinstance(value, list):
+        for item in value:
+            name = _clean_text(_string_value(_dict_value(item).get("name")))
+            if name:
+                authors.append(name)
+    return " and ".join(authors) or None
+
+
 def _authors_from_unpaywall(value: object) -> str | None:
     authors = []
     if isinstance(value, list):
@@ -226,6 +360,30 @@ def _authors_from_unpaywall(value: object) -> str | None:
             if name:
                 authors.append(name)
     return " and ".join(authors) or None
+
+
+def _year_from_crossref(work: dict[str, object]) -> int | None:
+    for key in (
+        "published-print",
+        "published-online",
+        "published",
+        "issued",
+        "created",
+    ):
+        year = _year_from_date_parts(_dict_value(work.get(key)).get("date-parts"))
+        if year is not None:
+            return year
+    return None
+
+
+def _year_from_date_parts(value: object) -> int | None:
+    if not isinstance(value, list) or not value:
+        return None
+    first_date = value[0]
+    if not isinstance(first_date, list) or not first_date:
+        return None
+    year = first_date[0]
+    return year if isinstance(year, int) else None
 
 
 def _abstract_from_openalex(value: object) -> str | None:
@@ -241,6 +399,20 @@ def _abstract_from_openalex(value: object) -> str | None:
     if not positioned:
         return None
     return " ".join(positioned[index] for index in sorted(positioned))
+
+
+def _crossref_pdf_url(value: object) -> str | None:
+    if not isinstance(value, list):
+        return None
+    for item in value:
+        link = _dict_value(item)
+        url = _clean_text(_string_value(link.get("URL")))
+        if not url:
+            continue
+        content_type = (_clean_text(_string_value(link.get("content-type"))) or "").lower()
+        if "pdf" in content_type or url.lower().endswith(".pdf"):
+            return url
+    return None
 
 
 def _arxiv_link(entry: ET.Element, content_type: str) -> str | None:
@@ -271,6 +443,44 @@ def _last_path_part(value: str) -> str:
 
 def _strip_arxiv_version(value: str) -> str:
     return re.sub(r"v\d+$", "", value)
+
+
+def _semantic_scholar_candidates_from_payload(
+    payload: object,
+) -> list[DiscoveryCandidate]:
+    if not isinstance(payload, dict):
+        return []
+    data = payload.get("data")
+    if isinstance(data, list):
+        return [
+            normalize_semantic_scholar_paper(item)
+            for item in data
+            if _has_semantic_scholar_identity(item)
+        ]
+    if _has_semantic_scholar_identity(payload):
+        return [normalize_semantic_scholar_paper(payload)]
+    return []
+
+
+def _has_semantic_scholar_identity(value: object) -> bool:
+    paper = _dict_value(value)
+    return bool(paper.get("paperId") or paper.get("externalIds"))
+
+
+def _first_string(value: object) -> str | None:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        for item in value:
+            if isinstance(item, str):
+                return item
+    return None
+
+
+def _strip_markup(value: str | None) -> str | None:
+    if value is None:
+        return None
+    return _clean_text(re.sub(r"<[^>]+>", "", value))
 
 
 def _year_from_text(value: str | None) -> int | None:
