@@ -59,7 +59,12 @@ class HttpChatProvider:
             timeout=self._timeout,
         )
         response.raise_for_status()
-        payload = response.json()
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise ProviderCallError(
+                "OpenAI-compatible provider returned non-JSON response"
+            ) from exc
         try:
             return str(payload["choices"][0]["message"]["content"])
         except (KeyError, IndexError, TypeError) as exc:
@@ -82,7 +87,10 @@ class HttpChatProvider:
             timeout=self._timeout,
         )
         response.raise_for_status()
-        payload = response.json()
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise ProviderCallError("Ollama provider returned non-JSON response") from exc
         try:
             return str(payload["message"]["content"])
         except (KeyError, TypeError) as exc:

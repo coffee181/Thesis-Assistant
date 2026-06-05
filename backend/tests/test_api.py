@@ -7,7 +7,7 @@ from knowledge_agent import main as main_module
 from knowledge_agent.db import connect, connect as real_connect
 from knowledge_agent.main import create_app
 from knowledge_agent.models import DiscoveryCandidate, ProviderSettings
-from knowledge_agent.providers import ProviderMessage
+from knowledge_agent.providers import ProviderCallError, ProviderMessage
 
 
 class ApiRecordingChatProvider:
@@ -22,6 +22,15 @@ class ApiRecordingChatProvider:
     ) -> str:
         self.calls.append({"settings": settings, "messages": messages})
         return self.answer
+
+
+class ApiFailingChatProvider:
+    def complete(
+        self,
+        settings: ProviderSettings,
+        messages: list[ProviderMessage],
+    ) -> str:
+        raise ProviderCallError("OpenAI-compatible provider returned non-JSON response")
 
 
 class FakeDiscoveryClient:
@@ -638,6 +647,38 @@ def test_ask_current_paper_returns_traceable_answer(tmp_path: Path, write_pdf):
     assert "retrieval augmented generation" in prompt
 
 
+def test_ask_current_paper_reports_provider_call_failure(tmp_path: Path, write_pdf):
+    source = write_pdf(
+        tmp_path / "Provider Failure Paper.pdf",
+        ["The method uses retrieval augmented generation."],
+    )
+    library_dir = tmp_path / "library"
+    client = TestClient(
+        create_app(library_dir=library_dir, chat_provider=ApiFailingChatProvider()),
+        raise_server_exceptions=False,
+    )
+    import_response = client.post("/api/imports/pdf", json={"source_path": str(source)})
+    paper_id = import_response.json()["paper"]["id"]
+    client.put(
+        "/api/settings/provider",
+        json={
+            "provider": "openai_compatible",
+            "base_url": "https://api.example.test/v1",
+            "model": "research-model",
+            "api_key": "secret-key",
+            "outbound_context_policy": "snippets_only",
+        },
+    )
+
+    response = client.post(
+        f"/api/papers/{paper_id}/assistant/ask",
+        json={"question": "What method is used?"},
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "OpenAI-compatible provider returned non-JSON response"
+
+
 def test_ask_selected_text_returns_selection_citation(tmp_path: Path, write_pdf):
     source = write_pdf(
         tmp_path / "Selectable Paper.pdf",
@@ -683,6 +724,43 @@ def test_ask_selected_text_returns_selection_citation(tmp_path: Path, write_pdf)
     prompt = chat_provider.calls[0]["messages"][1].content
     assert "retrieval augmented generation" in prompt
     assert "The introduction gives background." not in prompt
+
+
+def test_ask_selected_text_reports_provider_call_failure(tmp_path: Path, write_pdf):
+    source = write_pdf(
+        tmp_path / "Provider Failure Selection.pdf",
+        ["The method uses retrieval augmented generation."],
+    )
+    library_dir = tmp_path / "library"
+    client = TestClient(
+        create_app(library_dir=library_dir, chat_provider=ApiFailingChatProvider()),
+        raise_server_exceptions=False,
+    )
+    import_response = client.post("/api/imports/pdf", json={"source_path": str(source)})
+    paper_id = import_response.json()["paper"]["id"]
+    client.put(
+        "/api/settings/provider",
+        json={
+            "provider": "openai_compatible",
+            "base_url": "https://api.example.test/v1",
+            "model": "research-model",
+            "api_key": "secret-key",
+            "outbound_context_policy": "snippets_only",
+        },
+    )
+
+    response = client.post(
+        f"/api/papers/{paper_id}/assistant/selection",
+        json={
+            "selected_text": "retrieval augmented generation",
+            "page_number": 1,
+            "source_span": "page:1:selection",
+            "action": "translate",
+        },
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "OpenAI-compatible provider returned non-JSON response"
 
 
 def test_notes_and_highlights_endpoints_roundtrip(tmp_path: Path):

@@ -1,5 +1,7 @@
+import pytest
+
 from knowledge_agent.models import ProviderSettings
-from knowledge_agent.providers import HttpChatProvider, ProviderMessage
+from knowledge_agent.providers import HttpChatProvider, ProviderCallError, ProviderMessage
 
 
 class RecordingHttpClient:
@@ -36,6 +38,25 @@ class RecordingResponse:
         return self._payload
 
 
+class NonJsonResponse:
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> dict:
+        raise ValueError("not JSON")
+
+
+class NonJsonHttpClient:
+    def post(
+        self,
+        url: str,
+        json: dict,
+        headers: dict | None = None,
+        timeout: float | None = None,
+    ):
+        return NonJsonResponse()
+
+
 def test_openai_compatible_provider_routes_chat_completion():
     http_client = RecordingHttpClient(
         {"choices": [{"message": {"content": "Grounded answer"}}]}
@@ -61,6 +82,25 @@ def test_openai_compatible_provider_routes_chat_completion():
         "messages": [{"role": "user", "content": "Question"}],
         "temperature": 0.2,
     }
+
+
+def test_openai_compatible_provider_reports_non_json_response():
+    provider = HttpChatProvider(http_client=NonJsonHttpClient())
+
+    with pytest.raises(
+        ProviderCallError,
+        match="OpenAI-compatible provider returned non-JSON response",
+    ):
+        provider.complete(
+            ProviderSettings(
+                provider="openai_compatible",
+                base_url="https://api.example.test/v1",
+                model="research-model",
+                api_key="secret",
+                outbound_context_policy="snippets_only",
+            ),
+            [ProviderMessage(role="user", content="Question")],
+        )
 
 
 def test_ollama_provider_routes_local_chat():

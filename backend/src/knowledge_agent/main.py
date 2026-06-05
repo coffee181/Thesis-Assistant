@@ -21,7 +21,7 @@ from knowledge_agent.db import connect, init_db
 from knowledge_agent.discovery import ExternalDiscoveryClient
 from knowledge_agent.import_service import import_pdf, import_pdf_folder
 from knowledge_agent.models import BibliographyRecord, Chunk, ProviderSettings, SearchResultRecord
-from knowledge_agent.providers import ChatProvider, HttpChatProvider
+from knowledge_agent.providers import ChatProvider, HttpChatProvider, ProviderCallError
 from knowledge_agent.repositories import (
     ChunksRepository,
     DocumentsRepository,
@@ -233,6 +233,11 @@ def create_app(
             raise HTTPException(status_code=404, detail="paper not found") from exc
         except ProviderConfigurationError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except ProviderCallError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=str(exc),
+            ) from exc
         return AskPaperQuestionResponse(
             answer=answer.answer,
             citations=[
@@ -268,6 +273,11 @@ def create_app(
             raise HTTPException(status_code=404, detail="paper not found") from exc
         except ProviderConfigurationError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except ProviderCallError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=str(exc),
+            ) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return AskPaperQuestionResponse(
