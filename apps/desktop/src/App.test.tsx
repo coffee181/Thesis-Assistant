@@ -1018,7 +1018,9 @@ describe("App", () => {
       });
 
     render(<App />);
-    await userEvent.type(await screen.findByLabelText("External search"), "local rag");
+    await userEvent.click(await screen.findByRole("button", { name: "Discover" }));
+    expect(screen.getByRole("complementary", { name: "Discover literature" })).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText("External search"), "local rag");
     await userEvent.click(screen.getByRole("button", { name: "Search external" }));
 
     await waitFor(() => {
@@ -1151,7 +1153,9 @@ describe("App", () => {
       });
 
     render(<App />);
-    await userEvent.type(await screen.findByLabelText("External search"), "local rag");
+    await userEvent.click(await screen.findByRole("button", { name: "Discover" }));
+    expect(screen.getByRole("complementary", { name: "Discover literature" })).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText("External search"), "local rag");
     await userEvent.click(screen.getByRole("button", { name: "Search external" }));
     await userEvent.click(await screen.findByRole("button", { name: "Download PDF" }));
     await userEvent.click(await screen.findByRole("button", { name: "Confirm import" }));
@@ -1214,7 +1218,9 @@ describe("App", () => {
       });
 
     render(<App />);
-    await userEvent.type(await screen.findByLabelText("External search"), "closed paper");
+    await userEvent.click(await screen.findByRole("button", { name: "Discover" }));
+    expect(screen.getByRole("complementary", { name: "Discover literature" })).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText("External search"), "closed paper");
     await userEvent.click(screen.getByRole("button", { name: "Search external" }));
 
     expect(await screen.findByText("Closed Access Paper")).toBeInTheDocument();

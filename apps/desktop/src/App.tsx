@@ -43,6 +43,7 @@ import {
   setPaperFavorite,
 } from "./api";
 import { AssistantRail } from "./components/AssistantRail";
+import { DiscoverDrawer } from "./components/DiscoverDrawer";
 import { ImportDialog, ImportMode } from "./components/ImportDialog";
 import { LibraryRail } from "./components/LibraryRail";
 import { ReaderWorkspace } from "./components/ReaderWorkspace";
@@ -691,6 +692,20 @@ export default function App() {
           onProxyUrlChange={setProxyUrl}
           onSaveSettings={handleSaveSettings}
           onSelectLibrary={handleSelectLibrary}
+        />
+      ) : null}
+
+      {openSurface === "discover" ? (
+        <DiscoverDrawer
+          externalQuery={externalQuery}
+          externalResults={externalResults}
+          pendingDownloads={pendingDownloads}
+          resultMetadata={resultMetadata}
+          onClose={() => setOpenSurface(null)}
+          onConfirmPendingImport={handleConfirmPendingImport}
+          onDownloadOpenPdf={handleDownloadOpenPdf}
+          onExternalQueryChange={setExternalQuery}
+          onExternalSearch={handleExternalSearch}
         />
       ) : null}
     </main>

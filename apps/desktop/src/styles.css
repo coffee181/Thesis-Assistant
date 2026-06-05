@@ -503,6 +503,79 @@ textarea {
   gap: 8px;
 }
 
+.drawer-panel {
+  background: #ffffff;
+  border-left: 1px solid #d9e0ea;
+  box-shadow: -18px 0 42px rgba(15, 23, 42, 0.14);
+  box-sizing: border-box;
+  display: grid;
+  gap: 14px;
+  grid-template-rows: auto auto 1fr;
+  height: 100vh;
+  max-width: min(520px, 100vw);
+  overflow: auto;
+  padding: 20px;
+  position: fixed;
+  right: 0;
+  top: 0;
+  width: 520px;
+  z-index: 18;
+}
+
+.drawer-header {
+  align-items: flex-start;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.drawer-header h2 {
+  font-size: 20px;
+  margin: 0 0 6px;
+}
+
+.drawer-header p,
+.drawer-form label {
+  color: #64748b;
+  margin: 0;
+}
+
+.drawer-header button {
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  color: #334155;
+  cursor: pointer;
+  font-weight: 700;
+  padding: 8px 10px;
+}
+
+.drawer-form {
+  display: grid;
+  gap: 8px;
+}
+
+.drawer-form input {
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  box-sizing: border-box;
+  padding: 9px 10px;
+  width: 100%;
+}
+
+.drawer-list {
+  display: grid;
+  gap: 10px;
+}
+
+.result-card {
+  border: 1px solid #d9e0ea;
+  border-radius: 8px;
+  display: grid;
+  gap: 7px;
+  padding: 12px;
+}
+
 .sidebar {
   border-right: 1px solid #d7dde5;
   background: #ffffff;
