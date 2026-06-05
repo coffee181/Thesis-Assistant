@@ -212,12 +212,16 @@ describe("App", () => {
     expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
 
     expect(screen.getByRole("navigation", { name: "Library" })).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Filter tag")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Start your research library" })).toBeInTheDocument();
     expect(screen.getByText("Import papers or discover literature to begin reading with cited context.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Import papers" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Discover literature" })).toBeInTheDocument();
     expect(screen.getByText("Configure a model provider to ask questions about the current paper.")).toBeInTheDocument();
 
+    expect(screen.queryByRole("heading", { name: "Ask current paper" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Question")).not.toBeInTheDocument();
+    expect(screen.queryByText("Notes and highlights")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("PDF source path")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("PDF folder path")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Bibliography source path")).not.toBeInTheDocument();
@@ -225,6 +229,41 @@ describe("App", () => {
     expect(screen.queryByText("No recent jobs.")).not.toBeInTheDocument();
     expect(screen.queryByText("No search hits.")).not.toBeInTheDocument();
     expect(screen.queryByText("No external results.")).not.toBeInTheDocument();
+  });
+
+  it("prompts the user to open a paper when the library already has papers", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ status: "ok", service: "knowledge-agent-backend" }))
+      .mockResolvedValueOnce(jsonResponse({ ...defaultLibraryStatus, paper_count: 1 }))
+      .mockResolvedValueOnce(jsonResponse({ papers: [readerPaper] }))
+      .mockResolvedValueOnce(jsonResponse(defaultProviderSettings))
+      .mockResolvedValueOnce(jsonResponse(emptyJobsResponse));
+
+    render(<App />);
+
+    expect(await screen.findByRole("button", { name: "Open Reader Paper" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Open a paper to start reading" })).toBeInTheDocument();
+    expect(screen.getByText("Select a paper from the library rail to load its PDF, extracted text, and assistant context.")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Start your research library" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Import papers" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Discover literature" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the open-paper prompt when filters hide existing papers", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ status: "ok", service: "knowledge-agent-backend" }))
+      .mockResolvedValueOnce(jsonResponse({ ...defaultLibraryStatus, paper_count: 1 }))
+      .mockResolvedValueOnce(jsonResponse({ papers: [] }))
+      .mockResolvedValueOnce(jsonResponse(defaultProviderSettings))
+      .mockResolvedValueOnce(jsonResponse(emptyJobsResponse));
+
+    render(<App />);
+
+    expect(await screen.findByText("No papers in this library yet.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Open a paper to start reading" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Start your research library" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Import papers" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Discover literature" })).not.toBeInTheDocument();
   });
 
   it("waits for a backend that is still starting", async () => {
@@ -1409,9 +1448,9 @@ describe("App", () => {
       expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:8765/api/papers/1/reader-context");
     });
     expect(await screen.findByRole("heading", { name: "Reader Paper" })).toBeInTheDocument();
-    expect(await screen.findByText("parsed 路 2 pages")).toBeInTheDocument();
+    expect(await screen.findByText("parsed - 2 pages")).toBeInTheDocument();
     expect(await screen.findByText("Page one explains the research question.")).toBeInTheDocument();
-    expect(await screen.findByText("Context: Reader Paper 路 parsed")).toBeInTheDocument();
+    expect(await screen.findByText("Context: Reader Paper - parsed")).toBeInTheDocument();
     expect(screen.queryByText("No selection.")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Translate selection" })).not.toBeInTheDocument();
   });
@@ -1782,6 +1821,43 @@ describe("App", () => {
     expect(await screen.findByText("Gathering cited context...")).toBeInTheDocument();
     expect(await screen.findByText("Streamed answer")).toBeInTheDocument();
     expect(await screen.findByText("Citation Page 2")).toBeInTheDocument();
+  });
+
+  it("renders citation cards as compact excerpts", async () => {
+    const longSnippet =
+      "The cited snippet says retrieval augmented generation improves paper reading, then keeps going with implementation details, unrelated benchmark examples, and enough extra words that it should not dominate the assistant rail screenshot.";
+    const compactSnippet =
+      "The cited snippet says retrieval augmented generation improves paper reading, then keeps going with implementation details, unrelated benchmark examples,...";
+    queueInitialReaderLoad(configuredProviderSettings);
+    queueOpenReaderContext();
+    fetchMock.mockImplementationOnce(async () =>
+      streamResponse([
+        `event: final\ndata: ${JSON.stringify({
+          answer: "Streamed answer",
+          citations: [
+            {
+              chunk_id: 5,
+              paper_id: 1,
+              title: "Reader Paper",
+              page_number: 2,
+              snippet: longSnippet,
+              source_span: "page:2:chars:0-190",
+            },
+          ],
+          mode: "strict",
+          provider: "openai_compatible",
+          qna_id: 11,
+        })}\n\n`,
+      ]),
+    );
+
+    await openReaderPaper();
+    await userEvent.type(await screen.findByLabelText("Question"), "What method is used?");
+    await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+
+    const citationCard = await screen.findByRole("button", { name: "Open citation page 2" });
+    expect(within(citationCard).getByText(compactSnippet)).toBeInTheDocument();
+    expect(screen.queryByText(longSnippet)).not.toBeInTheDocument();
   });
 
   it("falls back to sync current-paper ask when streaming fails", async () => {

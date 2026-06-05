@@ -2,6 +2,7 @@ import type { ReaderContext } from "../api";
 
 type ReaderWorkspaceProps = {
   readerContext: ReaderContext | null;
+  hasPapers: boolean;
   activeReaderPage: number | null;
   selectedText: string;
   selectedPageNumber: number | null;
@@ -17,6 +18,7 @@ type ReaderWorkspaceProps = {
 
 export function ReaderWorkspace({
   readerContext,
+  hasPapers,
   activeReaderPage,
   selectedText,
   selectedPageNumber,
@@ -32,6 +34,18 @@ export function ReaderWorkspace({
   const selectionReady = selectedText.trim().length > 0 && selectedPageNumber !== null;
 
   if (!readerContext) {
+    if (hasPapers) {
+      return (
+        <section aria-label="Reader workspace" className="reader-workspace empty-reader">
+          <div className="onboarding-panel">
+            <p className="eyebrow">Ready to read</p>
+            <h2>Open a paper to start reading</h2>
+            <p>Select a paper from the library rail to load its PDF, extracted text, and assistant context.</p>
+          </div>
+        </section>
+      );
+    }
+
     return (
       <section aria-label="Reader workspace" className="reader-workspace empty-reader">
         <div className="onboarding-panel">
@@ -57,7 +71,7 @@ export function ReaderWorkspace({
         <div>
           <h2>{readerContext.paper.title}</h2>
           <p>
-            {`${readerContext.document.parse_status} 路 ${
+            {`${readerContext.document.parse_status} - ${
               readerContext.document.page_count ?? readerContext.pages.length
             } pages`}
           </p>

@@ -78,7 +78,7 @@ export function LibraryRail({
         <div className="compact-row">
           <input
             id="tag-filter"
-            placeholder="reading"
+            placeholder="Filter tag"
             value={tagFilter}
             onChange={(event) => onTagFilterChange(event.target.value)}
           />

@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Knowledge Agent",
+  "productName": "Thesis Assistant",
   "version": "0.1.0",
   "identifier": "com.knowledgeagent.desktop",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Knowledge Agent",
+        "title": "Thesis Assistant",
         "width": 1280,
         "height": 820,
         "minWidth": 1024,

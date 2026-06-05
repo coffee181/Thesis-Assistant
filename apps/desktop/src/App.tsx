@@ -620,6 +620,7 @@ export default function App() {
 
         <ReaderWorkspace
           activeReaderPage={activeReaderPage}
+          hasPapers={(libraryStatus?.paper_count ?? papers.length) > 0}
           pdfPreviewUrl={pdfPreviewUrl()}
           readerContext={readerContext}
           selectedPageNumber={selectedPageNumber}

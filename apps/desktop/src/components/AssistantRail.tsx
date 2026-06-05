@@ -17,6 +17,15 @@ type AssistantRailProps = {
   onSaveAnswerAsNote: () => void;
 };
 
+function compactCitationSnippet(snippet: string, maxLength = 153): string {
+  const normalized = snippet.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, maxLength).trimEnd()}...`;
+}
+
 export function AssistantRail({
   readerContext,
   providerSettings,
@@ -39,7 +48,7 @@ export function AssistantRail({
         <h2>Assistant</h2>
         <p>
           {readerContext
-            ? `Context: ${readerContext.paper.title} 路 ${readerContext.document.parse_status}`
+            ? `Context: ${readerContext.paper.title} - ${readerContext.document.parse_status}`
             : "Context: no paper open"}
         </p>
       </header>
@@ -54,17 +63,19 @@ export function AssistantRail({
         </section>
       ) : null}
 
-      <section className="assistant-card">
-        <h3>Ask current paper</h3>
-        <form className="ask-form" onSubmit={onAsk}>
-          <label htmlFor="question">Question</label>
-          <textarea id="question" rows={4} value={question} onChange={(event) => onQuestionChange(event.target.value)} />
-          <button disabled={!readerContext || question.trim().length === 0} type="submit">
-            Ask
-          </button>
-        </form>
-        {assistantProgress ? <p className="context-status">{assistantProgress}</p> : null}
-      </section>
+      {readerContext ? (
+        <section className="assistant-card">
+          <h3>Ask current paper</h3>
+          <form className="ask-form" onSubmit={onAsk}>
+            <label htmlFor="question">Question</label>
+            <textarea id="question" rows={4} value={question} onChange={(event) => onQuestionChange(event.target.value)} />
+            <button disabled={question.trim().length === 0} type="submit">
+              Ask
+            </button>
+          </form>
+          {assistantProgress ? <p className="context-status">{assistantProgress}</p> : null}
+        </section>
+      ) : null}
 
       {assistantAnswer ? (
         <article className="answer-block">
@@ -84,39 +95,41 @@ export function AssistantRail({
                 type="button"
               >
                 <strong>Citation Page {citation.page_number}</strong>
-                <p>{citation.snippet}</p>
+                <p>{compactCitationSnippet(citation.snippet)}</p>
               </button>
             ))}
           </div>
         </article>
       ) : null}
 
-      <section className="notes-panel">
-        <header className="notes-header">
-          <h3>Notes and highlights</h3>
-        </header>
-        {notes.length > 0 ? (
-          <div className="note-list">
-            {notes.map((note) => (
-              <article className="note-item" key={note.id}>
-                <strong>Note{note.page_number === null ? "" : ` Page ${note.page_number}`}</strong>
-                <p>{note.body}</p>
-                {note.selected_text ? <span>{note.selected_text}</span> : null}
-              </article>
-            ))}
-          </div>
-        ) : null}
-        {highlights.length > 0 ? (
-          <div className="note-list">
-            {highlights.map((highlight) => (
-              <article className="note-item highlight-item" key={highlight.id}>
-                <strong>Highlight Page {highlight.page_number}</strong>
-                <p>{highlight.selected_text}</p>
-              </article>
-            ))}
-          </div>
-        ) : null}
-      </section>
+      {readerContext && (notes.length > 0 || highlights.length > 0) ? (
+        <section className="notes-panel">
+          <header className="notes-header">
+            <h3>Notes and highlights</h3>
+          </header>
+          {notes.length > 0 ? (
+            <div className="note-list">
+              {notes.map((note) => (
+                <article className="note-item" key={note.id}>
+                  <strong>Note{note.page_number === null ? "" : ` Page ${note.page_number}`}</strong>
+                  <p>{note.body}</p>
+                  {note.selected_text ? <span>{note.selected_text}</span> : null}
+                </article>
+              ))}
+            </div>
+          ) : null}
+          {highlights.length > 0 ? (
+            <div className="note-list">
+              {highlights.map((highlight) => (
+                <article className="note-item highlight-item" key={highlight.id}>
+                  <strong>Highlight Page {highlight.page_number}</strong>
+                  <p>{highlight.selected_text}</p>
+                </article>
+              ))}
+            </div>
+          ) : null}
+        </section>
+      ) : null}
     </aside>
   );
 }
