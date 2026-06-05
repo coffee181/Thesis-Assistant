@@ -473,6 +473,116 @@ def test_ask_current_paper_returns_traceable_answer(tmp_path: Path, write_pdf):
     assert "retrieval augmented generation" in prompt
 
 
+def test_ask_selected_text_returns_selection_citation(tmp_path: Path, write_pdf):
+    source = write_pdf(
+        tmp_path / "Selectable Paper.pdf",
+        [
+            "The introduction gives background.",
+            "The method uses retrieval augmented generation with page citations.",
+        ],
+    )
+    library_dir = tmp_path / "library"
+    chat_provider = ApiRecordingChatProvider("Selection answer")
+    client = TestClient(create_app(library_dir=library_dir, chat_provider=chat_provider))
+    import_response = client.post("/api/imports/pdf", json={"source_path": str(source)})
+    paper_id = import_response.json()["paper"]["id"]
+    client.put(
+        "/api/settings/provider",
+        json={
+            "provider": "openai_compatible",
+            "base_url": "https://api.example.test/v1",
+            "model": "research-model",
+            "api_key": "secret-key",
+            "outbound_context_policy": "snippets_only",
+        },
+    )
+
+    response = client.post(
+        f"/api/papers/{paper_id}/assistant/selection",
+        json={
+            "selected_text": "retrieval augmented generation",
+            "page_number": 2,
+            "source_span": "page:2:selection",
+            "action": "translate",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["answer"] == "Selection answer"
+    assert payload["mode"] == "selection"
+    assert payload["citations"][0]["chunk_id"] is None
+    assert payload["citations"][0]["page_number"] == 2
+    assert payload["citations"][0]["snippet"] == "retrieval augmented generation"
+    assert payload["citations"][0]["source_span"] == "page:2:selection"
+    prompt = chat_provider.calls[0]["messages"][1].content
+    assert "retrieval augmented generation" in prompt
+    assert "The introduction gives background." not in prompt
+
+
+def test_notes_and_highlights_endpoints_roundtrip(tmp_path: Path):
+    source = tmp_path / "Notes Paper.pdf"
+    source.write_bytes(b"%PDF-1.4 notes")
+    library_dir = tmp_path / "library"
+    client = TestClient(create_app(library_dir=library_dir))
+    import_response = client.post("/api/imports/pdf", json={"source_path": str(source)})
+    paper_id = import_response.json()["paper"]["id"]
+
+    note_response = client.post(
+        "/api/notes",
+        json={
+            "paper_id": paper_id,
+            "body": "This selected passage matters.",
+            "page_number": 2,
+            "source_span": "page:2:selection",
+            "selected_text": "retrieval augmented generation",
+            "note_type": "selection",
+        },
+    )
+    note_id = note_response.json()["id"]
+    highlight_response = client.post(
+        "/api/highlights",
+        json={
+            "paper_id": paper_id,
+            "page_number": 2,
+            "source_span": "page:2:selection",
+            "selected_text": "retrieval augmented generation",
+            "color": "yellow",
+            "note_id": note_id,
+        },
+    )
+    notes_response = client.get(f"/api/papers/{paper_id}/notes")
+    highlights_response = client.get(f"/api/papers/{paper_id}/highlights")
+
+    assert note_response.status_code == 201
+    assert note_response.json()["body"] == "This selected passage matters."
+    assert note_response.json()["selected_text"] == "retrieval augmented generation"
+    assert highlight_response.status_code == 201
+    assert highlight_response.json()["note_id"] == note_id
+    assert notes_response.status_code == 200
+    assert notes_response.json()["notes"][0]["id"] == note_id
+    assert highlights_response.status_code == 200
+    assert highlights_response.json()["highlights"][0]["page_number"] == 2
+
+
+def test_ask_selected_text_reports_missing_paper(tmp_path: Path):
+    library_dir = tmp_path / "library"
+    client = TestClient(create_app(library_dir=library_dir))
+
+    response = client.post(
+        "/api/papers/999/assistant/selection",
+        json={
+            "selected_text": "important claim",
+            "page_number": 1,
+            "source_span": "page:1:selection",
+            "action": "explain",
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "paper not found"
+
+
 def test_ask_current_paper_requires_provider_settings(tmp_path: Path, write_pdf):
     source = write_pdf(
         tmp_path / "Unconfigured Paper.pdf",

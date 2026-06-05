@@ -21,7 +21,7 @@ class AssistantConfig:
 
 @dataclass(frozen=True)
 class TraceableCitation:
-    chunk_id: int
+    chunk_id: int | None
     paper_id: int
     title: str
     page_number: int
@@ -111,6 +111,73 @@ def answer_current_paper_question(
     )
 
 
+def answer_selected_text(
+    conn,
+    paper_id: int,
+    selected_text: str,
+    page_number: int,
+    source_span: str,
+    action: str,
+    chat_provider: ChatProvider,
+    instruction: str | None = None,
+) -> TraceableAnswer:
+    cleaned_selection = selected_text.strip()
+    if not cleaned_selection:
+        raise ValueError("selected text is required")
+    if action not in {"translate", "explain", "summarize"}:
+        raise ValueError("unsupported selected text action")
+
+    paper = PapersRepository(conn).get(paper_id)
+    settings = SettingsRepository(conn).get_provider_settings()
+    _ensure_provider_configured(settings)
+
+    citation = TraceableCitation(
+        chunk_id=None,
+        paper_id=paper.id,
+        title=paper.title,
+        page_number=page_number,
+        snippet=cleaned_selection,
+        source_span=source_span,
+    )
+    messages = [
+        ProviderMessage(
+            role="system",
+            content=(
+                "You are a research reading assistant. Use only the selected text "
+                "provided by the user. Answer in Chinese and preserve important "
+                "English technical terms when useful."
+            ),
+        ),
+        ProviderMessage(
+            role="user",
+            content=_build_selection_prompt(
+                paper_title=paper.title,
+                action=action,
+                selected_text=cleaned_selection,
+                page_number=page_number,
+                source_span=source_span,
+                instruction=instruction,
+            ),
+        ),
+    ]
+    answer = chat_provider.complete(settings, messages)
+    entry = QnaRepository(conn).create(
+        paper_id=paper.id,
+        question=f"{action} selected text",
+        answer=answer,
+        cited_chunks=[citation.to_dict()],
+        mode="selection",
+        provider=settings.provider,
+    )
+    return TraceableAnswer(
+        answer=answer,
+        citations=[citation],
+        mode="selection",
+        provider=settings.provider,
+        qna_id=entry.id,
+    )
+
+
 def _ensure_provider_configured(settings: ProviderSettings) -> None:
     if settings.provider == "none":
         raise ProviderConfigurationError("model provider not configured")
@@ -148,4 +215,24 @@ def _build_prompt(
         f"Evidence snippets:\n{snippets}\n\n"
         f"Question: {question}\n\n"
         "Answer in Chinese. Cite claims using [S1], [S2] style markers."
+    )
+
+
+def _build_selection_prompt(
+    paper_title: str,
+    action: str,
+    selected_text: str,
+    page_number: int,
+    source_span: str,
+    instruction: str | None,
+) -> str:
+    extra_instruction = f"\nUser instruction: {instruction.strip()}" if instruction else ""
+    return (
+        f"Current Paper: {paper_title}\n"
+        f"Action: {action}\n"
+        f"Source: Page {page_number}, {source_span}\n\n"
+        f"Selected text:\n{selected_text}\n"
+        f"{extra_instruction}\n\n"
+        "Return a concise Chinese response grounded only in the selected text. "
+        "Refer to the source as [Selection]."
     )

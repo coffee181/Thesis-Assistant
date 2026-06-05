@@ -7,6 +7,7 @@ import httpx
 from knowledge_agent.assistant import (
     ProviderConfigurationError,
     answer_current_paper_question,
+    answer_selected_text,
 )
 from knowledge_agent.bibliography import (
     export_bibtex,
@@ -22,6 +23,8 @@ from knowledge_agent.providers import ChatProvider, HttpChatProvider
 from knowledge_agent.repositories import (
     ChunksRepository,
     DocumentsRepository,
+    HighlightsRepository,
+    NotesRepository,
     PapersRepository,
     SettingsRepository,
     SearchResultsRepository,
@@ -30,14 +33,20 @@ from knowledge_agent.schemas import (
     AskPaperQuestionRequest,
     AskPaperQuestionResponse,
     CitationResponse,
+    CreateHighlightRequest,
+    CreateNoteRequest,
     ExternalSearchResponse,
     ExportBibliographyResponse,
+    HighlightResponse,
+    HighlightsResponse,
     ImportPendingDownloadRequest,
     ImportBibliographyRequest,
     ImportBibliographyResponse,
     ImportPdfRequest,
     ImportPdfResponse,
     LocalSearchResponse,
+    NoteResponse,
+    NotesResponse,
     OpenPdfDownloadRequest,
     OpenPdfDownloadResponse,
     PapersResponse,
@@ -45,6 +54,7 @@ from knowledge_agent.schemas import (
     ProviderSettingsResponse,
     ReaderContextResponse,
     ReaderPageResponse,
+    SelectedTextAssistantRequest,
 )
 
 
@@ -176,6 +186,112 @@ def create_app(
             provider=answer.provider,
             qna_id=answer.qna_id,
         )
+
+    @app.post(
+        "/api/papers/{paper_id}/assistant/selection",
+        response_model=AskPaperQuestionResponse,
+    )
+    def ask_selected_text(
+        paper_id: int,
+        request: SelectedTextAssistantRequest,
+    ) -> AskPaperQuestionResponse:
+        try:
+            with connect(config.database_path) as conn:
+                answer = answer_selected_text(
+                    conn=conn,
+                    paper_id=paper_id,
+                    selected_text=request.selected_text,
+                    page_number=request.page_number,
+                    source_span=request.source_span,
+                    action=request.action,
+                    instruction=request.instruction,
+                    chat_provider=resolved_chat_provider,
+                )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="paper not found") from exc
+        except ProviderConfigurationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return AskPaperQuestionResponse(
+            answer=answer.answer,
+            citations=[
+                CitationResponse(**citation.to_dict())
+                for citation in answer.citations
+            ],
+            mode=answer.mode,
+            provider=answer.provider,
+            qna_id=answer.qna_id,
+        )
+
+    @app.post(
+        "/api/notes",
+        response_model=NoteResponse,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_note(request: CreateNoteRequest) -> NoteResponse:
+        try:
+            with connect(config.database_path) as conn:
+                PapersRepository(conn).get(request.paper_id)
+                note = NotesRepository(conn).create(
+                    paper_id=request.paper_id,
+                    body=request.body,
+                    page_number=request.page_number,
+                    source_span=request.source_span,
+                    selected_text=request.selected_text,
+                    note_type=request.note_type,
+                    qna_id=request.qna_id,
+                )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="paper not found") from exc
+        return NoteResponse.model_validate(note)
+
+    @app.get(
+        "/api/papers/{paper_id}/notes",
+        response_model=NotesResponse,
+    )
+    def list_notes(paper_id: int) -> NotesResponse:
+        try:
+            with connect(config.database_path) as conn:
+                PapersRepository(conn).get(paper_id)
+                notes = NotesRepository(conn).list_for_paper(paper_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="paper not found") from exc
+        return NotesResponse(notes=notes)
+
+    @app.post(
+        "/api/highlights",
+        response_model=HighlightResponse,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_highlight(request: CreateHighlightRequest) -> HighlightResponse:
+        try:
+            with connect(config.database_path) as conn:
+                PapersRepository(conn).get(request.paper_id)
+                highlight = HighlightsRepository(conn).create(
+                    paper_id=request.paper_id,
+                    page_number=request.page_number,
+                    source_span=request.source_span,
+                    selected_text=request.selected_text,
+                    color=request.color,
+                    note_id=request.note_id,
+                )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="paper not found") from exc
+        return HighlightResponse.model_validate(highlight)
+
+    @app.get(
+        "/api/papers/{paper_id}/highlights",
+        response_model=HighlightsResponse,
+    )
+    def list_highlights(paper_id: int) -> HighlightsResponse:
+        try:
+            with connect(config.database_path) as conn:
+                PapersRepository(conn).get(paper_id)
+                highlights = HighlightsRepository(conn).list_for_paper(paper_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="paper not found") from exc
+        return HighlightsResponse(highlights=highlights)
 
     @app.post(
         "/api/imports/pdf",

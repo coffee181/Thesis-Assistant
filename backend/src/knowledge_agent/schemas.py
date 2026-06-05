@@ -128,6 +128,64 @@ class ReaderContextResponse(BaseModel):
     pages: list[ReaderPageResponse]
 
 
+class NoteResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    paper_id: int
+    body: str
+    page_number: int | None
+    source_span: str | None
+    selected_text: str | None
+    note_type: str
+    qna_id: int | None
+    created_at: str
+    updated_at: str
+
+
+class NotesResponse(BaseModel):
+    notes: list[NoteResponse]
+
+
+class HighlightResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    paper_id: int
+    page_number: int
+    source_span: str
+    selected_text: str
+    color: str
+    note_id: int | None
+    created_at: str
+
+
+class HighlightsResponse(BaseModel):
+    highlights: list[HighlightResponse]
+
+
+class CreateNoteRequest(BaseModel):
+    paper_id: int
+    body: str = Field(min_length=1)
+    page_number: int | None = None
+    source_span: str | None = None
+    selected_text: str | None = None
+    note_type: str = Field(
+        default="manual",
+        pattern="^(manual|assistant_answer|selection)$",
+    )
+    qna_id: int | None = None
+
+
+class CreateHighlightRequest(BaseModel):
+    paper_id: int
+    page_number: int
+    source_span: str = Field(min_length=1)
+    selected_text: str = Field(min_length=1)
+    color: str = "yellow"
+    note_id: int | None = None
+
+
 class ProviderSettingsRequest(BaseModel):
     provider: str = Field(pattern="^(none|openai_compatible|ollama)$")
     base_url: str | None = None
@@ -153,8 +211,16 @@ class AskPaperQuestionRequest(BaseModel):
     question: str = Field(min_length=1)
 
 
+class SelectedTextAssistantRequest(BaseModel):
+    selected_text: str = Field(min_length=1)
+    page_number: int
+    source_span: str = Field(min_length=1)
+    action: str = Field(pattern="^(translate|explain|summarize)$")
+    instruction: str | None = None
+
+
 class CitationResponse(BaseModel):
-    chunk_id: int
+    chunk_id: int | None
     paper_id: int
     title: str
     page_number: int

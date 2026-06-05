@@ -5,6 +5,7 @@ import pytest
 from knowledge_agent.assistant import (
     AssistantConfig,
     ProviderConfigurationError,
+    answer_selected_text,
     answer_current_paper_question,
 )
 from knowledge_agent.db import connect, init_db
@@ -116,6 +117,116 @@ def test_assistant_returns_insufficient_evidence_without_calling_provider(tmp_pa
     assert provider.calls == []
     assert answer.answer == "当前文献没有可用于回答的已抽取文本。"
     assert answer.citations == []
+
+
+def test_selected_text_translation_sends_only_selection_to_provider(tmp_path: Path):
+    db_path = tmp_path / "library.sqlite"
+    provider = RecordingChatProvider("Selected translation")
+    with connect(db_path) as conn:
+        paper_id = _seed_papers(conn)
+        SettingsRepository(conn).save_provider_settings(
+            ProviderSettings(
+                provider="openai_compatible",
+                base_url="https://api.example.test/v1",
+                model="research-model",
+                api_key="secret",
+                outbound_context_policy="snippets_only",
+            )
+        )
+
+        answer = answer_selected_text(
+            conn=conn,
+            paper_id=paper_id,
+            selected_text="The selected method uses retrieval augmented generation.",
+            page_number=3,
+            source_span="page:3:selection",
+            action="translate",
+            chat_provider=provider,
+        )
+
+    prompt = provider.calls[0]["messages"][1].content
+    assert "The selected method uses retrieval augmented generation." in prompt
+    assert "page:3:selection" in prompt
+    assert "Page 3" in prompt
+    assert "The introduction discusses background motivation." not in prompt
+    assert "The other paper also mentions retrieval" not in prompt
+    assert answer.answer == "Selected translation"
+    assert answer.mode == "selection"
+    assert answer.citations[0].chunk_id is None
+    assert answer.citations[0].title == "Current Paper"
+    assert answer.citations[0].page_number == 3
+    assert answer.citations[0].snippet == "The selected method uses retrieval augmented generation."
+    assert answer.citations[0].source_span == "page:3:selection"
+    assert answer.qna_id is not None
+
+
+def test_selected_text_explanation_uses_instruction(tmp_path: Path):
+    db_path = tmp_path / "library.sqlite"
+    provider = RecordingChatProvider("Selected explanation")
+    with connect(db_path) as conn:
+        paper_id = _seed_papers(conn)
+        SettingsRepository(conn).save_provider_settings(
+            ProviderSettings(
+                provider="openai_compatible",
+                base_url="https://api.example.test/v1",
+                model="research-model",
+                api_key="secret",
+                outbound_context_policy="snippets_only",
+            )
+        )
+
+        answer = answer_selected_text(
+            conn=conn,
+            paper_id=paper_id,
+            selected_text="contrastive retrieval",
+            page_number=2,
+            source_span="page:2:selection",
+            action="explain",
+            instruction="Explain the term for a first-year graduate student.",
+            chat_provider=provider,
+        )
+
+    prompt = provider.calls[0]["messages"][1].content
+    assert "Action: explain" in prompt
+    assert "Explain the term for a first-year graduate student." in prompt
+    assert answer.answer == "Selected explanation"
+    assert answer.citations[0].snippet == "contrastive retrieval"
+
+
+def test_selected_text_requires_nonblank_selection(tmp_path: Path):
+    db_path = tmp_path / "library.sqlite"
+    with connect(db_path) as conn:
+        init_db(conn)
+        paper = PapersRepository(conn).create(title="Readable Paper", year=None, doi=None)
+
+        with pytest.raises(ValueError, match="selected text is required"):
+            answer_selected_text(
+                conn=conn,
+                paper_id=paper.id,
+                selected_text="   ",
+                page_number=1,
+                source_span="page:1:selection",
+                action="translate",
+                chat_provider=RecordingChatProvider(),
+            )
+
+
+def test_selected_text_requires_configured_provider(tmp_path: Path):
+    db_path = tmp_path / "library.sqlite"
+    with connect(db_path) as conn:
+        init_db(conn)
+        paper = PapersRepository(conn).create(title="Readable Paper", year=None, doi=None)
+
+        with pytest.raises(ProviderConfigurationError):
+            answer_selected_text(
+                conn=conn,
+                paper_id=paper.id,
+                selected_text="important claim",
+                page_number=1,
+                source_span="page:1:selection",
+                action="translate",
+                chat_provider=RecordingChatProvider(),
+            )
 
 
 def _seed_papers(conn) -> int:
