@@ -1,12 +1,17 @@
 import { FormEvent, useEffect, useState } from "react";
 
 import {
+  AskPaperQuestionResponse,
+  askPaperQuestion,
   getHealth,
+  getProviderSettings,
   getReaderContext,
   importPdf,
   listPapers,
   Paper,
+  ProviderSettings,
   ReaderContext,
+  saveProviderSettings,
   SearchHit,
   searchLocal,
 } from "./api";
@@ -19,11 +24,27 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchHits, setSearchHits] = useState<SearchHit[]>([]);
   const [readerContext, setReaderContext] = useState<ReaderContext | null>(null);
+  const [providerSettings, setProviderSettings] = useState<ProviderSettings | null>(null);
+  const [provider, setProvider] = useState("none");
+  const [baseUrl, setBaseUrl] = useState("");
+  const [model, setModel] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [outboundContextPolicy, setOutboundContextPolicy] = useState("snippets_only");
+  const [question, setQuestion] = useState("");
+  const [assistantAnswer, setAssistantAnswer] = useState<AskPaperQuestionResponse | null>(null);
   const [message, setMessage] = useState("");
 
   async function refreshPapers() {
     const response = await listPapers();
     setPapers(response.papers);
+  }
+
+  function applyProviderSettings(settings: ProviderSettings) {
+    setProviderSettings(settings);
+    setProvider(settings.provider);
+    setBaseUrl(settings.base_url ?? "");
+    setModel(settings.model ?? "");
+    setOutboundContextPolicy(settings.outbound_context_policy);
   }
 
   useEffect(() => {
@@ -35,6 +56,9 @@ export default function App() {
         if (!active) return;
         setBackendStatus(health.status);
         await refreshPapers();
+        const settings = await getProviderSettings();
+        if (!active) return;
+        applyProviderSettings(settings);
       } catch (error) {
         if (!active) return;
         setBackendStatus("offline");
@@ -83,8 +107,40 @@ export default function App() {
     try {
       const context = await getReaderContext(paper.id);
       setReaderContext(context);
+      setAssistantAnswer(null);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not open paper");
+    }
+  }
+
+  async function handleSaveSettings(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setMessage("");
+    try {
+      const saved = await saveProviderSettings({
+        provider,
+        base_url: emptyToNull(baseUrl),
+        model: emptyToNull(model),
+        api_key: emptyToNull(apiKey),
+        outbound_context_policy: outboundContextPolicy,
+      });
+      setApiKey("");
+      applyProviderSettings(saved);
+      setMessage("Provider settings saved");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not save provider settings");
+    }
+  }
+
+  async function handleAsk(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!readerContext) return;
+    setMessage("");
+    try {
+      const response = await askPaperQuestion(readerContext.paper.id, question);
+      setAssistantAnswer(response);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Ask failed");
     }
   }
 
@@ -200,7 +256,99 @@ export default function App() {
             ? `Context: ${readerContext.paper.title} - ${readerContext.document.parse_status}`
             : "Context: none"}
         </p>
+
+        <section className="assistant-section" aria-labelledby="provider-heading">
+          <h3 id="provider-heading">Model settings</h3>
+          <p className="context-status">Provider: {providerSettings?.provider ?? "loading"}</p>
+          <p className="context-status">
+            {providerSettings?.api_key_configured ? "API key configured" : "API key not configured"}
+          </p>
+          <form className="settings-form" onSubmit={handleSaveSettings}>
+            <label htmlFor="provider">Provider</label>
+            <select
+              id="provider"
+              value={provider}
+              onChange={(event) => setProvider(event.target.value)}
+            >
+              <option value="none">None</option>
+              <option value="openai_compatible">OpenAI-compatible</option>
+              <option value="ollama">Ollama</option>
+            </select>
+
+            <label htmlFor="base-url">Base URL</label>
+            <input
+              id="base-url"
+              value={baseUrl}
+              onChange={(event) => setBaseUrl(event.target.value)}
+              placeholder="https://api.example.com/v1"
+            />
+
+            <label htmlFor="model">Model</label>
+            <input
+              id="model"
+              value={model}
+              onChange={(event) => setModel(event.target.value)}
+              placeholder="gpt-4.1-mini"
+            />
+
+            <label htmlFor="api-key">API key</label>
+            <input
+              id="api-key"
+              value={apiKey}
+              onChange={(event) => setApiKey(event.target.value)}
+              placeholder="Stored locally"
+              type="password"
+            />
+
+            <label htmlFor="outbound-policy">Outbound policy</label>
+            <select
+              id="outbound-policy"
+              value={outboundContextPolicy}
+              onChange={(event) => setOutboundContextPolicy(event.target.value)}
+            >
+              <option value="snippets_only">Snippets only</option>
+              <option value="local_only">Local only</option>
+            </select>
+
+            <button type="submit">Save settings</button>
+          </form>
+        </section>
+
+        <section className="assistant-section" aria-labelledby="ask-heading">
+          <h3 id="ask-heading">Ask</h3>
+          <form className="settings-form" onSubmit={handleAsk}>
+            <label htmlFor="question">Question</label>
+            <textarea
+              id="question"
+              value={question}
+              onChange={(event) => setQuestion(event.target.value)}
+              rows={4}
+            />
+            <button type="submit" disabled={!readerContext || question.trim().length === 0}>
+              Ask
+            </button>
+          </form>
+
+          {assistantAnswer ? (
+            <article className="answer-block">
+              <p>{assistantAnswer.answer}</p>
+              <div className="citation-list">
+                {assistantAnswer.citations.map((citation) => (
+                  <div className="citation" key={citation.chunk_id}>
+                    <strong>Citation Page {citation.page_number}</strong>
+                    <p>{citation.snippet}</p>
+                  </div>
+                ))}
+              </div>
+            </article>
+          ) : null}
+        </section>
       </aside>
     </main>
   );
+}
+
+function emptyToNull(value: string): string | null {
+  const stripped = value.trim();
+  return stripped.length > 0 ? stripped : null;
 }
