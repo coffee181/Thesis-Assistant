@@ -29,9 +29,21 @@ export type PapersResponse = {
   papers: Paper[];
 };
 
+export type LibraryStatus = {
+  library_dir: string;
+  database_path: string;
+  paper_count: number;
+};
+
 export type HealthResponse = {
   status: string;
   service: string;
+};
+
+export type ImportPdfResponse = {
+  imported: boolean;
+  paper: Paper;
+  document: Document;
 };
 
 export type ImportBibliographyResponse = {
@@ -44,6 +56,16 @@ export type ImportBibliographyResponse = {
 export type ExportBibliographyResponse = {
   format: string;
   content: string;
+};
+
+export type ImportFolderResponse = {
+  source_path: string;
+  discovered_count: number;
+  imported_count: number;
+  skipped_count: number;
+  failed_count: number;
+  imports: ImportPdfResponse[];
+  failures: { source_path: string; error: string }[];
 };
 
 export type SearchHit = {
@@ -206,6 +228,25 @@ export async function listPapers(): Promise<PapersResponse> {
   return response.json();
 }
 
+export async function getLibrary(): Promise<LibraryStatus> {
+  const response = await fetch(`${API_BASE}/api/library`);
+  if (!response.ok) throw new Error("Could not load library status");
+  return response.json();
+}
+
+export async function selectLibrary(libraryDir: string): Promise<LibraryStatus> {
+  const response = await fetch(`${API_BASE}/api/library`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ library_dir: libraryDir }),
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({ detail: "Library selection failed" }));
+    throw new Error(payload.detail ?? "Library selection failed");
+  }
+  return response.json();
+}
+
 export async function importPdf(sourcePath: string): Promise<void> {
   const response = await fetch(`${API_BASE}/api/imports/pdf`, {
     method: "POST",
@@ -216,6 +257,19 @@ export async function importPdf(sourcePath: string): Promise<void> {
     const payload = await response.json().catch(() => ({ detail: "Import failed" }));
     throw new Error(payload.detail ?? "Import failed");
   }
+}
+
+export async function importFolder(sourceDir: string): Promise<ImportFolderResponse> {
+  const response = await fetch(`${API_BASE}/api/imports/folder`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source_dir: sourceDir }),
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({ detail: "Folder import failed" }));
+    throw new Error(payload.detail ?? "Folder import failed");
+  }
+  return response.json();
 }
 
 export async function importBibliography(

@@ -24,6 +24,12 @@ const configuredProviderSettings: ProviderSettings = {
   api_key_configured: true,
 };
 
+const defaultLibraryStatus = {
+  library_dir: "F:\\KnowledgeAgentLibrary",
+  database_path: "F:\\KnowledgeAgentLibrary\\database.sqlite",
+  paper_count: 0,
+};
+
 const readerPaper = {
   id: 1,
   title: "Reader Paper",
@@ -74,6 +80,10 @@ function queueInitialReaderLoad(settings: ProviderSettings = defaultProviderSett
     })
     .mockResolvedValueOnce({
       ok: true,
+      json: async () => defaultLibraryStatus,
+    })
+    .mockResolvedValueOnce({
+      ok: true,
       json: async () => ({ papers: [readerPaper] }),
     })
     .mockResolvedValueOnce({
@@ -117,12 +127,23 @@ function fetchCallBody(path: string) {
   return JSON.parse(String(call[1]?.body ?? "{}"));
 }
 
+function jsonResponse(payload: unknown) {
+  return {
+    ok: true,
+    json: async () => payload,
+  };
+}
+
 describe("App", () => {
   it("loads backend status and papers", async () => {
     fetchMock
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({ status: "ok", service: "knowledge-agent-backend" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => defaultLibraryStatus,
       })
       .mockResolvedValueOnce({
         ok: true,
@@ -140,11 +161,144 @@ describe("App", () => {
     expect(await screen.findByText("Provider: none")).toBeInTheDocument();
   });
 
+  it("loads library status and displays the active library path", async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith("/health")) {
+        return jsonResponse({ status: "ok", service: "knowledge-agent-backend" });
+      }
+      if (url.endsWith("/api/library")) {
+        return jsonResponse(defaultLibraryStatus);
+      }
+      if (url.endsWith("/api/papers")) {
+        return jsonResponse({ papers: [] });
+      }
+      if (url.endsWith("/api/settings/provider")) {
+        return jsonResponse(defaultProviderSettings);
+      }
+      throw new Error(`Unhandled request: ${url}`);
+    });
+
+    render(<App />);
+
+    expect(await screen.findByText("Library: F:\\KnowledgeAgentLibrary")).toBeInTheDocument();
+    const urls = fetchMock.mock.calls.map(([url]) => String(url));
+    expect(urls.indexOf("http://127.0.0.1:8765/api/library")).toBeLessThan(
+      urls.indexOf("http://127.0.0.1:8765/api/papers"),
+    );
+  });
+
+  it("selects a new library path and refreshes papers", async () => {
+    const selectedLibrary = {
+      library_dir: "D:\\ResearchLibrary",
+      database_path: "D:\\ResearchLibrary\\database.sqlite",
+      paper_count: 1,
+    };
+    let paperLoads = 0;
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/health")) {
+        return jsonResponse({ status: "ok", service: "knowledge-agent-backend" });
+      }
+      if (url.endsWith("/api/library") && init?.method === "PUT") {
+        return jsonResponse(selectedLibrary);
+      }
+      if (url.endsWith("/api/library")) {
+        return jsonResponse(defaultLibraryStatus);
+      }
+      if (url.endsWith("/api/papers")) {
+        paperLoads += 1;
+        return jsonResponse({
+          papers: paperLoads === 1 ? [] : [{ ...readerPaper, id: 5, title: "Switched Paper" }],
+        });
+      }
+      if (url.endsWith("/api/settings/provider")) {
+        return jsonResponse(defaultProviderSettings);
+      }
+      throw new Error(`Unhandled request: ${url}`);
+    });
+
+    render(<App />);
+    await userEvent.clear(await screen.findByLabelText("Library location"));
+    await userEvent.type(screen.getByLabelText("Library location"), "D:\\ResearchLibrary");
+    await userEvent.click(screen.getByRole("button", { name: "Select library" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://127.0.0.1:8765/api/library",
+        expect.objectContaining({ method: "PUT" }),
+      );
+    });
+    const selectCall = fetchMock.mock.calls.find(
+      ([url, init]) => String(url).endsWith("/api/library") && init?.method === "PUT",
+    );
+    expect(JSON.parse(String(selectCall?.[1]?.body))).toEqual({
+      library_dir: "D:\\ResearchLibrary",
+    });
+    expect(await screen.findByText("Library selected")).toBeInTheDocument();
+    expect(await screen.findByText("Library: D:\\ResearchLibrary")).toBeInTheDocument();
+    expect(await screen.findByText("Switched Paper")).toBeInTheDocument();
+  });
+
+  it("imports a PDF folder and refreshes papers with import counts", async () => {
+    let paperLoads = 0;
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/health")) {
+        return jsonResponse({ status: "ok", service: "knowledge-agent-backend" });
+      }
+      if (url.endsWith("/api/library")) {
+        return jsonResponse(defaultLibraryStatus);
+      }
+      if (url.endsWith("/api/imports/folder") && init?.method === "POST") {
+        return jsonResponse({
+          source_path: "F:\\incoming",
+          discovered_count: 3,
+          imported_count: 2,
+          skipped_count: 1,
+          failed_count: 0,
+          imports: [],
+          failures: [],
+        });
+      }
+      if (url.endsWith("/api/papers")) {
+        paperLoads += 1;
+        return jsonResponse({
+          papers: paperLoads === 1 ? [] : [{ ...readerPaper, id: 6, title: "Folder Paper" }],
+        });
+      }
+      if (url.endsWith("/api/settings/provider")) {
+        return jsonResponse(defaultProviderSettings);
+      }
+      throw new Error(`Unhandled request: ${url}`);
+    });
+
+    render(<App />);
+    await userEvent.type(await screen.findByLabelText("PDF folder path"), "F:\\incoming");
+    await userEvent.click(screen.getByRole("button", { name: "Import folder" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://127.0.0.1:8765/api/imports/folder",
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
+    const importCall = fetchMock.mock.calls.find(
+      ([url, init]) => String(url).endsWith("/api/imports/folder") && init?.method === "POST",
+    );
+    expect(JSON.parse(String(importCall?.[1]?.body))).toEqual({
+      source_dir: "F:\\incoming",
+    });
+    expect(await screen.findByText("Folder imported: 2 imported, 1 skipped, 0 failed")).toBeInTheDocument();
+    expect(await screen.findByText("Folder Paper")).toBeInTheDocument();
+  });
+
   it("imports a PDF by source path", async () => {
     fetchMock
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({ status: "ok", service: "knowledge-agent-backend" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => defaultLibraryStatus,
       })
       .mockResolvedValueOnce({
         ok: true,
@@ -181,6 +335,10 @@ describe("App", () => {
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({ status: "ok", service: "knowledge-agent-backend" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => defaultLibraryStatus,
       })
       .mockResolvedValueOnce({
         ok: true,
@@ -238,6 +396,10 @@ describe("App", () => {
       })
       .mockResolvedValueOnce({
         ok: true,
+        json: async () => defaultLibraryStatus,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
         json: async () => ({
           papers: [
             {
@@ -275,6 +437,10 @@ describe("App", () => {
       })
       .mockResolvedValueOnce({
         ok: true,
+        json: async () => defaultLibraryStatus,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
         json: async () => ({ papers: [] }),
       })
       .mockResolvedValueOnce({
@@ -307,6 +473,10 @@ describe("App", () => {
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({ status: "ok", service: "knowledge-agent-backend" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => defaultLibraryStatus,
       })
       .mockResolvedValueOnce({
         ok: true,
@@ -361,6 +531,10 @@ describe("App", () => {
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({ status: "ok", service: "knowledge-agent-backend" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => defaultLibraryStatus,
       })
       .mockResolvedValueOnce({
         ok: true,
@@ -490,6 +664,10 @@ describe("App", () => {
       })
       .mockResolvedValueOnce({
         ok: true,
+        json: async () => defaultLibraryStatus,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
         json: async () => ({ papers: [] }),
       })
       .mockResolvedValueOnce({
@@ -538,6 +716,10 @@ describe("App", () => {
       })
       .mockResolvedValueOnce({
         ok: true,
+        json: async () => defaultLibraryStatus,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
         json: async () => ({ papers: [] }),
       })
       .mockResolvedValueOnce({
@@ -582,6 +764,10 @@ describe("App", () => {
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({ status: "ok", service: "knowledge-agent-backend" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => defaultLibraryStatus,
       })
       .mockResolvedValueOnce({
         ok: true,
@@ -832,6 +1018,10 @@ describe("App", () => {
       })
       .mockResolvedValueOnce({
         ok: true,
+        json: async () => defaultLibraryStatus,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
         json: async () => ({ papers: [] }),
       })
       .mockResolvedValueOnce({
@@ -872,6 +1062,10 @@ describe("App", () => {
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({ status: "ok", service: "knowledge-agent-backend" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => defaultLibraryStatus,
       })
       .mockResolvedValueOnce({
         ok: true,

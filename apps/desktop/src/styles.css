@@ -130,6 +130,22 @@ textarea {
   color: #334155;
 }
 
+.library-control {
+  display: grid;
+  gap: 10px;
+}
+
+.library-control label {
+  margin: 0;
+}
+
+.library-path {
+  color: #475569;
+  font-size: 13px;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 .paper-list {
   display: grid;
   gap: 10px;

@@ -9,15 +9,18 @@ import {
   downloadOpenPdf,
   exportBibliography,
   getHealth,
+  getLibrary,
   getProviderSettings,
   getReaderContext,
   Highlight,
   importBibliography,
+  importFolder,
   importPendingDownload,
   importPdf,
   listHighlights,
   listNotes,
   listPapers,
+  LibraryStatus,
   Note,
   Paper,
   ProviderSettings,
@@ -27,6 +30,7 @@ import {
   SearchHit,
   searchExternal,
   searchLocal,
+  selectLibrary,
   SelectedTextAction,
 } from "./api";
 import "./styles.css";
@@ -34,6 +38,9 @@ import "./styles.css";
 export default function App() {
   const [backendStatus, setBackendStatus] = useState("checking");
   const [papers, setPapers] = useState<Paper[]>([]);
+  const [libraryStatus, setLibraryStatus] = useState<LibraryStatus | null>(null);
+  const [libraryPath, setLibraryPath] = useState("");
+  const [folderPath, setFolderPath] = useState("");
   const [sourcePath, setSourcePath] = useState("");
   const [bibliographyPath, setBibliographyPath] = useState("");
   const [bibliographyFormat, setBibliographyFormat] = useState("auto");
@@ -81,6 +88,10 @@ export default function App() {
         const health = await getHealth();
         if (!active) return;
         setBackendStatus(health.status);
+        const library = await getLibrary();
+        if (!active) return;
+        setLibraryStatus(library);
+        setLibraryPath(library.library_dir);
         await refreshPapers();
         const settings = await getProviderSettings();
         if (!active) return;
@@ -97,6 +108,42 @@ export default function App() {
       active = false;
     };
   }, []);
+
+  async function handleSelectLibrary(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const selectedPath = libraryPath.trim();
+    if (!selectedPath) return;
+    setMessage("");
+    try {
+      const library = await selectLibrary(selectedPath);
+      setLibraryStatus(library);
+      setLibraryPath(library.library_dir);
+      setReaderContext(null);
+      setSearchHits([]);
+      setExternalResults([]);
+      setMessage("Library selected");
+      await refreshPapers();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Library selection failed");
+    }
+  }
+
+  async function handleFolderImport(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const sourceDir = folderPath.trim();
+    if (!sourceDir) return;
+    setMessage("");
+    try {
+      const response = await importFolder(sourceDir);
+      setFolderPath("");
+      setMessage(
+        `Folder imported: ${response.imported_count} imported, ${response.skipped_count} skipped, ${response.failed_count} failed`,
+      );
+      await refreshPapers();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Folder import failed");
+    }
+  }
 
   async function handleImport(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -340,6 +387,24 @@ export default function App() {
         <h1>Knowledge Agent</h1>
         <p className="status">Backend: {backendStatus}</p>
 
+        <form className="panel-form library-control" onSubmit={handleSelectLibrary}>
+          <p className="library-path">
+            Library: {libraryStatus?.library_dir ?? "loading"}
+          </p>
+          <label htmlFor="library-path">Library location</label>
+          <div className="form-row">
+            <input
+              id="library-path"
+              value={libraryPath}
+              onChange={(event) => setLibraryPath(event.target.value)}
+              placeholder="F:\\KnowledgeAgentLibrary"
+            />
+            <button type="submit" disabled={libraryPath.trim().length === 0}>
+              Select library
+            </button>
+          </div>
+        </form>
+
         <form className="panel-form" onSubmit={handleImport}>
           <label htmlFor="source-path">PDF source path</label>
           <div className="form-row">
@@ -351,6 +416,21 @@ export default function App() {
             />
             <button type="submit" disabled={sourcePath.trim().length === 0}>
               Import PDF
+            </button>
+          </div>
+        </form>
+
+        <form className="panel-form" onSubmit={handleFolderImport}>
+          <label htmlFor="folder-path">PDF folder path</label>
+          <div className="form-row">
+            <input
+              id="folder-path"
+              value={folderPath}
+              onChange={(event) => setFolderPath(event.target.value)}
+              placeholder="F:\\papers"
+            />
+            <button type="submit" disabled={folderPath.trim().length === 0}>
+              Import folder
             </button>
           </div>
         </form>
