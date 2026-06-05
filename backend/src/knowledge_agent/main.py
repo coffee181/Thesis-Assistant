@@ -210,6 +210,7 @@ def create_app(
             pdf_path,
             media_type="application/pdf",
             filename=filename,
+            content_disposition_type="inline",
         )
 
     @app.post(

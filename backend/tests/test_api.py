@@ -530,6 +530,7 @@ def test_paper_pdf_endpoint_streams_managed_pdf(tmp_path: Path, write_pdf):
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/pdf")
+    assert response.headers["content-disposition"].startswith("inline")
     assert "readable-paper.pdf" in response.headers["content-disposition"]
     assert response.content.startswith(b"%PDF")
 
