@@ -922,9 +922,9 @@ describe("App", () => {
     });
 
     render(<App />);
-    await userEvent.click(await screen.findByLabelText("Favorites only"));
-    await userEvent.type(screen.getByLabelText("Filter by tag"), "reading");
-    await userEvent.click(screen.getByRole("button", { name: "Apply library filters" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Favorites" }));
+    await userEvent.type(screen.getByLabelText("Tag filter"), "reading");
+    await userEvent.click(screen.getByRole("button", { name: "Apply" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:8765/api/papers?favorite=true&tag=reading");
@@ -1279,8 +1279,10 @@ describe("App", () => {
       });
 
     render(<App />);
-    await userEvent.type(await screen.findByLabelText("Search library"), "contrastive retrieval");
-    await userEvent.click(screen.getByRole("button", { name: "Search" }));
+    await userEvent.type(
+      await screen.findByRole("searchbox", { name: "Search library or DOI" }),
+      "contrastive retrieval{enter}",
+    );
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -1335,8 +1337,10 @@ describe("App", () => {
       });
 
     render(<App />);
-    await userEvent.type(await screen.findByLabelText("Search library"), "10.1234/traceable");
-    await userEvent.click(screen.getByRole("button", { name: "Search" }));
+    await userEvent.type(
+      await screen.findByRole("searchbox", { name: "Search library or DOI" }),
+      "10.1234/traceable{enter}",
+    );
 
     expect(await screen.findByText("Traceable Literature Assistants")).toBeInTheDocument();
     expect(await screen.findByText("Metadata match")).toBeInTheDocument();
