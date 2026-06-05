@@ -1,6 +1,8 @@
 from pathlib import Path
+from typing import Callable
 
 from fastapi import FastAPI, HTTPException, Query, status
+import httpx
 
 from knowledge_agent.assistant import (
     ProviderConfigurationError,
@@ -13,25 +15,31 @@ from knowledge_agent.bibliography import (
 )
 from knowledge_agent.config import load_config
 from knowledge_agent.db import connect, init_db
+from knowledge_agent.discovery import ExternalDiscoveryClient
 from knowledge_agent.import_service import import_pdf
-from knowledge_agent.models import Chunk, ProviderSettings
+from knowledge_agent.models import BibliographyRecord, Chunk, ProviderSettings, SearchResultRecord
 from knowledge_agent.providers import ChatProvider, HttpChatProvider
 from knowledge_agent.repositories import (
     ChunksRepository,
     DocumentsRepository,
     PapersRepository,
     SettingsRepository,
+    SearchResultsRepository,
 )
 from knowledge_agent.schemas import (
     AskPaperQuestionRequest,
     AskPaperQuestionResponse,
     CitationResponse,
+    ExternalSearchResponse,
     ExportBibliographyResponse,
+    ImportPendingDownloadRequest,
     ImportBibliographyRequest,
     ImportBibliographyResponse,
     ImportPdfRequest,
     ImportPdfResponse,
     LocalSearchResponse,
+    OpenPdfDownloadRequest,
+    OpenPdfDownloadResponse,
     PapersResponse,
     ProviderSettingsRequest,
     ProviderSettingsResponse,
@@ -43,10 +51,14 @@ from knowledge_agent.schemas import (
 def create_app(
     library_dir: Path | None = None,
     chat_provider: ChatProvider | None = None,
+    discovery_client: ExternalDiscoveryClient | None = None,
+    pdf_downloader: Callable[[str, Path], None] | None = None,
 ) -> FastAPI:
     config = load_config(library_dir)
     config.library_dir.mkdir(parents=True, exist_ok=True)
     resolved_chat_provider = chat_provider or HttpChatProvider()
+    resolved_discovery_client = discovery_client or ExternalDiscoveryClient()
+    resolved_pdf_downloader = pdf_downloader or _download_pdf
 
     with connect(config.database_path) as conn:
         init_db(conn)
@@ -96,6 +108,17 @@ def create_app(
         with connect(config.database_path) as conn:
             hits = ChunksRepository(conn).search(query)
         return LocalSearchResponse(query=query, hits=hits)
+
+    @app.get("/api/search/external", response_model=ExternalSearchResponse)
+    def search_external(q: str = Query(min_length=1)) -> ExternalSearchResponse:
+        query = q.strip()
+        candidates = resolved_discovery_client.search(query)
+        with connect(config.database_path) as conn:
+            results = SearchResultsRepository(conn).replace_for_query(
+                query,
+                candidates,
+            )
+        return ExternalSearchResponse(query=query, results=results)
 
     @app.get(
         "/api/papers/{paper_id}/reader-context",
@@ -229,10 +252,81 @@ def create_app(
         content = export_bibtex(papers) if format_name == "bibtex" else export_ris(papers)
         return ExportBibliographyResponse(format=format_name, content=content)
 
+    @app.post(
+        "/api/downloads/open-pdf",
+        response_model=OpenPdfDownloadResponse,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def download_open_pdf(
+        request: OpenPdfDownloadRequest,
+    ) -> OpenPdfDownloadResponse:
+        with connect(config.database_path) as conn:
+            try:
+                result = SearchResultsRepository(conn).get(request.search_result_id)
+            except KeyError as exc:
+                raise HTTPException(
+                    status_code=404,
+                    detail="search result not found",
+                ) from exc
+
+        if not result.pdf_url:
+            raise HTTPException(
+                status_code=400,
+                detail="search result has no open PDF URL",
+            )
+
+        pending_path = _pending_download_path(config.library_dir, result)
+        pending_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            resolved_pdf_downloader(result.pdf_url, pending_path)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail="PDF download failed") from exc
+        return OpenPdfDownloadResponse(
+            pending_path=str(pending_path),
+            result=result,
+        )
+
+    @app.post(
+        "/api/imports/pending-download",
+        response_model=ImportPdfResponse,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def import_pending_download(
+        request: ImportPendingDownloadRequest,
+    ) -> ImportPdfResponse:
+        pending_path = Path(request.pending_path).resolve()
+        pending_root = (config.library_dir / "downloads" / "pending").resolve()
+        if not pending_path.exists():
+            raise HTTPException(status_code=404, detail="pending PDF not found")
+        if pending_path != pending_root and pending_root not in pending_path.parents:
+            raise HTTPException(
+                status_code=400,
+                detail="pending PDF path outside library",
+            )
+
+        try:
+            with connect(config.database_path) as conn:
+                search_result = SearchResultsRepository(conn).get(
+                    request.search_result_id
+                )
+                result = import_pdf(
+                    conn=conn,
+                    library_root=config.library_dir,
+                    source_path=pending_path,
+                    metadata=_metadata_from_search_result(search_result),
+                )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="search result not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        return ImportPdfResponse(
+            imported=result.imported,
+            paper=result.paper,
+            document=result.document,
+        )
+
     return app
-
-
-app = create_app()
 
 
 def _reader_pages_from_chunks(chunks: list[Chunk]) -> list[ReaderPageResponse]:
@@ -265,6 +359,35 @@ def _blank_to_none(value: str | None) -> str | None:
     return stripped or None
 
 
+def _download_pdf(url: str, target_path: Path) -> None:
+    with httpx.Client(timeout=60.0, follow_redirects=True) as client:
+        response = client.get(url)
+        response.raise_for_status()
+        target_path.write_bytes(response.content)
+
+
+def _pending_download_path(
+    library_dir: Path,
+    result: SearchResultRecord,
+) -> Path:
+    slug = _slugify(result.title) or "paper"
+    return library_dir / "downloads" / "pending" / f"{result.id}-{slug}.pdf"
+
+
+def _metadata_from_search_result(result: SearchResultRecord) -> BibliographyRecord:
+    return BibliographyRecord(
+        citation_key=None,
+        title=result.title,
+        authors=result.authors,
+        year=result.year,
+        doi=result.doi,
+        venue=result.venue,
+        abstract=result.abstract,
+        arxiv_id=result.arxiv_id,
+        entry_type="article",
+    )
+
+
 def _bibliography_format(format_name: str | None, source_path: Path | None) -> str:
     normalized = (format_name or "auto").strip().lower()
     if normalized == "auto":
@@ -281,3 +404,12 @@ def _bibliography_format(format_name: str | None, source_path: Path | None) -> s
     if normalized in {"bibtex", "ris"}:
         return normalized
     raise ValueError("unsupported bibliography format")
+
+
+def _slugify(value: str) -> str:
+    lowered = value.lower()
+    normalized = "".join(char if char.isalnum() else "-" for char in lowered)
+    return "-".join(part for part in normalized.split("-") if part)
+
+
+app = create_app()

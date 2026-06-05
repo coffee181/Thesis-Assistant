@@ -61,6 +61,44 @@ class PapersResponse(BaseModel):
     papers: list[PaperResponse]
 
 
+class SearchResultResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    query: str
+    source: str
+    external_id: str
+    title: str
+    authors: str | None
+    year: int | None
+    doi: str | None
+    venue: str | None
+    abstract: str | None
+    arxiv_id: str | None
+    pdf_url: str | None
+    landing_url: str | None
+    created_at: str
+
+
+class ExternalSearchResponse(BaseModel):
+    query: str
+    results: list[SearchResultResponse]
+
+
+class OpenPdfDownloadRequest(BaseModel):
+    search_result_id: int
+
+
+class OpenPdfDownloadResponse(BaseModel):
+    pending_path: str
+    result: SearchResultResponse
+
+
+class ImportPendingDownloadRequest(BaseModel):
+    search_result_id: int
+    pending_path: str = Field(min_length=1)
+
+
 class SearchHitResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

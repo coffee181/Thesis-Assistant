@@ -154,6 +154,37 @@ class PapersRepository:
         )
         return self.get(existing.id)
 
+    def update_metadata(self, paper_id: int, record: BibliographyRecord) -> Paper:
+        self._conn.execute(
+            """
+            update papers
+            set
+                title = ?,
+                authors = ?,
+                year = ?,
+                doi = ?,
+                venue = ?,
+                abstract = ?,
+                citation_key = ?,
+                arxiv_id = ?,
+                entry_type = ?
+            where id = ?
+            """,
+            (
+                record.title,
+                record.authors,
+                record.year,
+                _normalize_doi(record.doi),
+                record.venue,
+                record.abstract,
+                record.citation_key,
+                record.arxiv_id,
+                record.entry_type,
+                paper_id,
+            ),
+        )
+        return self.get(paper_id)
+
     def _find_existing_metadata_record(
         self,
         record: BibliographyRecord,

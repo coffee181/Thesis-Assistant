@@ -3,7 +3,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from knowledge_agent.main import create_app
-from knowledge_agent.models import ProviderSettings
+from knowledge_agent.models import DiscoveryCandidate, ProviderSettings
 from knowledge_agent.providers import ProviderMessage
 
 
@@ -19,6 +19,16 @@ class ApiRecordingChatProvider:
     ) -> str:
         self.calls.append({"settings": settings, "messages": messages})
         return self.answer
+
+
+class FakeDiscoveryClient:
+    def __init__(self, candidates: list[DiscoveryCandidate]):
+        self.candidates = candidates
+        self.queries: list[str] = []
+
+    def search(self, query: str, limit: int = 10) -> list[DiscoveryCandidate]:
+        self.queries.append(query)
+        return self.candidates[:limit]
 
 
 def test_import_pdf_endpoint_then_list_papers(tmp_path: Path):
@@ -189,6 +199,150 @@ def test_import_bibliography_endpoint_reports_missing_file(tmp_path: Path):
 
     assert response.status_code == 404
     assert response.json()["detail"] == "source bibliography not found"
+
+
+def test_external_search_endpoint_returns_cached_candidates(tmp_path: Path):
+    discovery_client = FakeDiscoveryClient(
+        [
+            DiscoveryCandidate(
+                source="openalex",
+                external_id="W123",
+                title="Local Knowledge Agents",
+                authors="Jane Doe",
+                year=2024,
+                doi="10.1234/local",
+                venue="Journal of Local Research",
+                abstract="Traceable local assistants.",
+                arxiv_id=None,
+                pdf_url="https://example.test/local.pdf",
+                landing_url="https://example.test/local",
+            )
+        ]
+    )
+    library_dir = tmp_path / "library"
+    client = TestClient(
+        create_app(library_dir=library_dir, discovery_client=discovery_client)
+    )
+
+    response = client.get("/api/search/external", params={"q": "local rag"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["query"] == "local rag"
+    assert discovery_client.queries == ["local rag"]
+    result = payload["results"][0]
+    assert result["id"] > 0
+    assert result["source"] == "openalex"
+    assert result["title"] == "Local Knowledge Agents"
+    assert result["authors"] == "Jane Doe"
+    assert result["pdf_url"] == "https://example.test/local.pdf"
+
+
+def test_download_open_pdf_then_confirm_imports_pending_file(tmp_path: Path):
+    discovery_client = FakeDiscoveryClient(
+        [
+            DiscoveryCandidate(
+                source="openalex",
+                external_id="W123",
+                title="Local Knowledge Agents",
+                authors="Jane Doe",
+                year=2024,
+                doi="10.1234/local",
+                venue="Journal of Local Research",
+                abstract="Traceable local assistants.",
+                arxiv_id="2401.12345",
+                pdf_url="https://example.test/local.pdf",
+                landing_url="https://example.test/local",
+            )
+        ]
+    )
+    downloaded_urls: list[str] = []
+
+    def pdf_downloader(url: str, target_path: Path) -> None:
+        downloaded_urls.append(url)
+        target_path.write_bytes(b"%PDF-1.4 downloaded pdf")
+
+    library_dir = tmp_path / "library"
+    client = TestClient(
+        create_app(
+            library_dir=library_dir,
+            discovery_client=discovery_client,
+            pdf_downloader=pdf_downloader,
+        )
+    )
+    search_response = client.get("/api/search/external", params={"q": "local rag"})
+    result_id = search_response.json()["results"][0]["id"]
+
+    download_response = client.post(
+        "/api/downloads/open-pdf",
+        json={"search_result_id": result_id},
+    )
+    pending_path = Path(download_response.json()["pending_path"])
+    import_response = client.post(
+        "/api/imports/pending-download",
+        json={"search_result_id": result_id, "pending_path": str(pending_path)},
+    )
+    list_response = client.get("/api/papers")
+
+    assert download_response.status_code == 201
+    assert downloaded_urls == ["https://example.test/local.pdf"]
+    assert pending_path.exists()
+    assert library_dir / "downloads" / "pending" in pending_path.parents
+    assert import_response.status_code == 201
+    assert import_response.json()["imported"] is True
+    assert import_response.json()["paper"]["title"] == "Local Knowledge Agents"
+    assert import_response.json()["paper"]["doi"] == "10.1234/local"
+    paper = list_response.json()["papers"][0]
+    assert paper["authors"] == "Jane Doe"
+    assert paper["venue"] == "Journal of Local Research"
+    assert paper["arxiv_id"] == "2401.12345"
+
+
+def test_download_open_pdf_requires_pdf_url(tmp_path: Path):
+    discovery_client = FakeDiscoveryClient(
+        [
+            DiscoveryCandidate(
+                source="openalex",
+                external_id="W123",
+                title="Closed Paper",
+                authors=None,
+                year=2024,
+                doi=None,
+                venue=None,
+                abstract=None,
+                arxiv_id=None,
+                pdf_url=None,
+                landing_url="https://example.test/closed",
+            )
+        ]
+    )
+    library_dir = tmp_path / "library"
+    client = TestClient(
+        create_app(library_dir=library_dir, discovery_client=discovery_client)
+    )
+    search_response = client.get("/api/search/external", params={"q": "closed"})
+    result_id = search_response.json()["results"][0]["id"]
+
+    response = client.post(
+        "/api/downloads/open-pdf",
+        json={"search_result_id": result_id},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "search result has no open PDF URL"
+
+
+def test_download_open_pdf_reports_missing_search_result(tmp_path: Path):
+    library_dir = tmp_path / "library"
+    client = TestClient(create_app(library_dir=library_dir))
+
+    response = client.post(
+        "/api/downloads/open-pdf",
+        json={"search_result_id": 999},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "search result not found"
 
 
 def test_local_search_returns_page_snippet_hits(tmp_path: Path, write_pdf):
