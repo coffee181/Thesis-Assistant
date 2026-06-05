@@ -89,6 +89,21 @@ A successful Windows release build must produce at least one ordinary installer:
 
 Generated artifacts remain untracked.
 
+## Sharing and Distribution
+
+For early private sharing, the practical artifact is the NSIS installer `.exe` plus a short release note. The recipient should not need this source repository, Python, Node.js, Rust, or a virtual environment. They install the app, open it from the Start menu or desktop shortcut if enabled by the installer, configure their own model provider settings, and choose or create their own local library path.
+
+For public or semi-public sharing, each release should include:
+
+- A versioned installer file, for example `Knowledge Agent_0.1.0_x64-setup.exe`.
+- A SHA-256 checksum for the installer.
+- A short release note with system requirements and known limitations.
+- A note that API keys, PDFs, and local libraries are never bundled.
+
+Unsigned Windows installers can trigger SmartScreen or "unknown publisher" warnings. That is acceptable for private testing with trusted recipients, but a public release should add code signing with a trusted certificate. Code signing is a follow-up release-hardening task, not part of the first installer build.
+
+PyInstaller-packaged Python apps can occasionally trigger antivirus false positives. If that appears during sharing, the mitigation path is code signing, stable versioned releases, documented checksums, and avoiding compressed or obfuscated packaging options.
+
 ## Error Handling
 
 - If PyInstaller is unavailable, `scripts/build-release.ps1` installs it into `.venv`.
@@ -118,6 +133,7 @@ Update `README.md` with:
 - `scripts/build-release.ps1` usage.
 - Release prerequisites.
 - Expected installer output path.
+- How to share the installer privately and what warning to expect before code signing.
 - A note that generated installers and backend binaries are not committed.
 
 ## Acceptance Criteria
