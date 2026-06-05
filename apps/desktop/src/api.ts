@@ -127,6 +127,7 @@ export type ProviderSettings = {
   base_url: string | null;
   model: string | null;
   outbound_context_policy: string;
+  proxy_url: string | null;
   api_key_configured: boolean;
 };
 
@@ -136,6 +137,7 @@ export type SaveProviderSettingsRequest = {
   model: string | null;
   api_key: string | null;
   outbound_context_policy: string;
+  proxy_url: string | null;
 };
 
 export type Citation = {

@@ -13,6 +13,7 @@ const defaultProviderSettings: ProviderSettings = {
   base_url: null,
   model: null,
   outbound_context_policy: "snippets_only",
+  proxy_url: null,
   api_key_configured: false,
 };
 
@@ -21,6 +22,7 @@ const configuredProviderSettings: ProviderSettings = {
   base_url: "https://api.example.test/v1",
   model: "research-model",
   outbound_context_policy: "snippets_only",
+  proxy_url: null,
   api_key_configured: true,
 };
 
@@ -1192,6 +1194,7 @@ describe("App", () => {
           base_url: "https://api.example.test/v1",
           model: "research-model",
           outbound_context_policy: "snippets_only",
+          proxy_url: "http://127.0.0.1:7897",
           api_key_configured: true,
         }),
       });
@@ -1199,6 +1202,7 @@ describe("App", () => {
     render(<App />);
     await userEvent.selectOptions(await screen.findByLabelText("Provider"), "openai_compatible");
     await userEvent.type(screen.getByLabelText("Base URL"), "https://api.example.test/v1");
+    await userEvent.type(screen.getByLabelText("Proxy URL"), "http://127.0.0.1:7897");
     await userEvent.type(screen.getByLabelText("Model"), "research-model");
     await userEvent.type(screen.getByLabelText("API key"), "secret-key");
     await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
@@ -1208,6 +1212,17 @@ describe("App", () => {
         "http://127.0.0.1:8765/api/settings/provider",
         expect.objectContaining({ method: "PUT" }),
       );
+    });
+    const settingsCall = fetchMock.mock.calls.find(
+      ([url, init]) => String(url).endsWith("/api/settings/provider") && init?.method === "PUT",
+    );
+    expect(JSON.parse(String(settingsCall?.[1]?.body ?? "{}"))).toMatchObject({
+      provider: "openai_compatible",
+      base_url: "https://api.example.test/v1",
+      model: "research-model",
+      api_key: "secret-key",
+      outbound_context_policy: "snippets_only",
+      proxy_url: "http://127.0.0.1:7897",
     });
     expect(await screen.findByText("Provider: openai_compatible")).toBeInTheDocument();
     expect(await screen.findByText("API key configured")).toBeInTheDocument();

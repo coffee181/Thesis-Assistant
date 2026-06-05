@@ -57,6 +57,7 @@ export default function App() {
   const [baseUrl, setBaseUrl] = useState("");
   const [model, setModel] = useState("");
   const [apiKey, setApiKey] = useState("");
+  const [proxyUrl, setProxyUrl] = useState("");
   const [outboundContextPolicy, setOutboundContextPolicy] = useState("snippets_only");
   const [question, setQuestion] = useState("");
   const [assistantAnswer, setAssistantAnswer] = useState<AskPaperQuestionResponse | null>(null);
@@ -78,6 +79,7 @@ export default function App() {
     setProvider(settings.provider);
     setBaseUrl(settings.base_url ?? "");
     setModel(settings.model ?? "");
+    setProxyUrl(settings.proxy_url ?? "");
     setOutboundContextPolicy(settings.outbound_context_policy);
   }
 
@@ -294,6 +296,7 @@ export default function App() {
         model: emptyToNull(model),
         api_key: emptyToNull(apiKey),
         outbound_context_policy: outboundContextPolicy,
+        proxy_url: emptyToNull(proxyUrl),
       });
       setApiKey("");
       applyProviderSettings(saved);
@@ -736,6 +739,14 @@ export default function App() {
               value={model}
               onChange={(event) => setModel(event.target.value)}
               placeholder="gpt-4.1-mini"
+            />
+
+            <label htmlFor="proxy-url">Proxy URL</label>
+            <input
+              id="proxy-url"
+              value={proxyUrl}
+              onChange={(event) => setProxyUrl(event.target.value)}
+              placeholder="http://127.0.0.1:7897"
             />
 
             <label htmlFor="api-key">API key</label>
